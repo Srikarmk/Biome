@@ -1,12 +1,12 @@
 """
-Database connection utilities for PostgreSQL using psycopg2.
+Database connection utilities for PostgreSQL using psycopg (v3).
 Provides a context manager for safe connection acquisition.
 """
 import contextlib
 import os
 from typing import Iterator
 
-import psycopg2
+import psycopg
 
 
 def _get_connection_string() -> str:
@@ -18,11 +18,11 @@ def _get_connection_string() -> str:
 
 
 @contextlib.contextmanager
-def get_db_connection() -> Iterator[psycopg2.extensions.connection]:
+def get_db_connection() -> Iterator[psycopg.Connection]:
   """
   Yield a PostgreSQL connection and ensure proper cleanup.
   """
-  conn = psycopg2.connect(_get_connection_string())
+  conn = psycopg.connect(_get_connection_string())
   try:
     yield conn
     conn.commit()

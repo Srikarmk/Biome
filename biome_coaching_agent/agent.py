@@ -4,6 +4,7 @@ Root ADK agent definition for Biome Coaching Agent.
 Follows ADK convention: exports `root_agent` for discovery.
 """
 from google.adk.agents import Agent
+from .tools import upload_video, extract_pose_landmarks
 
 
 root_agent = Agent(
@@ -16,7 +17,7 @@ root_agent = Agent(
     "3) Analyze form and generate actionable cues, 4) Save results.\n"
     "Be encouraging, specific, prioritize injury prevention, use frame numbers."
   ),
-  tools=[],
+  tools=[upload_video, extract_pose_landmarks],
 )
 
 
