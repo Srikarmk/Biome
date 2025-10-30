@@ -1,0 +1,692 @@
+# Cursor AI Rules for Biome - Cloud Run Hackathon Winner Mode 🏆
+
+## 🎯 Mission: Win the Cloud Run Hackathon (AI Agents Category)
+
+This project is competing for **$8,000 prize + potential $20,000 Grand Prize**.
+
+**Success Criteria:**
+- Technical Implementation (40%) - Clean ADK code, production-ready
+- Demo & Presentation (40%) - Clear problem, great demo, architecture diagram
+- Innovation (20%) - Novel ADK + MediaPipe + Gemini combination
+
+**Hackathon Timeline:** Oct 6 - Nov 10, 2025  
+**Priority:** Working demo that impresses judges > documentation
+
+---
+
+## 🚀 Core Rules: Build to Win, Not to Document
+
+This rule set prevents the AI from wasting time on documentation when it should be building impressive, working features that win hackathons.
+
+This prevents:
+- Cluttered project directories with README files everywhere
+- Time wasted writing docs instead of code
+- Duplicate information (docs that repeat what code already shows)
+- Maintenance burden (docs that get outdated quickly)
+
+## Rule: Only create markdown when explicitly requested
+1. **Never create** README.md files unless the user explicitly asks
+2. **Never create** CONTRIBUTING.md, CHANGELOG.md, or similar docs
+3. **Never create** markdown files to "document" code that should be self-documenting
+4. **Never create** markdown guides when the user asked for working code
+5. **Always focus** on creating functional code files (.py, .sql, .json, .env)
+6. **Only create markdown** when the user specifically says "create a README" or "write documentation"
+
+## Common Violations and Solutions
+
+### ❌ BAD: Creating unsolicited README files
+```markdown
+User: "Set up the database schema"
+
+AI response includes:
+- db/schema.sql ✓
+- db/README.md ❌ (NOT REQUESTED)
+- db/migrations/README.md ❌ (NOT REQUESTED)
+
+# db/README.md (UNNECESSARY)
+# Database Setup Guide
+This directory contains our database schema...
+[500 lines of documentation nobody asked for]
+```
+
+### ✅ GOOD: Just create the requested files
+```markdown
+User: "Set up the database schema"
+
+AI response includes:
+- db/schema.sql ✓ (with brief SQL comments)
+
+# db/schema.sql
+-- Biome Database Schema
+-- Run with: psql -d biome_coaching -f schema.sql
+
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    -- ... (code speaks for itself)
+);
+```
+
+### ❌ BAD: Creating documentation when asked for implementation
+```markdown
+User: "Implement the video upload endpoint"
+
+AI creates:
+- app/api/analysis.py ✓
+- docs/api/upload-endpoint.md ❌ (NOT REQUESTED)
+- docs/api/README.md ❌ (NOT REQUESTED)
+
+# docs/api/upload-endpoint.md (WASTE OF TIME)
+# Upload Endpoint Documentation
+## Overview
+The upload endpoint allows users to...
+[Detailed docs that should be in code comments]
+```
+
+### ✅ GOOD: Just implement the code with clear docstrings
+```markdown
+User: "Implement the video upload endpoint"
+
+AI creates:
+- app/api/analysis.py ✓ (with docstrings)
+
+# app/api/analysis.py
+from fastapi import APIRouter, UploadFile, HTTPException
+
+router = APIRouter()
+
+@router.post("/analysis/upload")
+async def upload_video(file: UploadFile, exercise_name: str):
+    """
+    Upload workout video for analysis.
+    
+    Args:
+        file: Video file (MP4/MOV/AVI/WebM, max 100MB)
+        exercise_name: Exercise type (e.g., 'Squat')
+    
+    Returns:
+        AnalysisSessionResponse with sessionId and WebSocket URL
+    """
+    # Implementation here...
+```
+
+### ❌ BAD: Creating architecture diagrams as markdown
+```markdown
+User: "Show me the system architecture"
+
+AI creates:
+- docs/architecture.md ❌ (creates file unprompted)
+- docs/diagrams/system-flow.md ❌ (creates file unprompted)
+
+When the user just wanted to SEE it in the chat response, not CREATE files.
+```
+
+### ✅ GOOD: Show architecture in chat response
+```markdown
+User: "Show me the system architecture"
+
+AI responds in chat:
+"Here's the Biome architecture:
+
+┌─────────────┐
+│   React     │
+│  Frontend   │
+└──────┬──────┘
+       │
+┌──────▼──────┐
+│   FastAPI   │
+│   Backend   │
+└─────────────┘
+
+Would you like me to CREATE a file with this, or is this explanation sufficient?"
+```
+
+## When You Think You Need to Create Markdown
+
+### Scenario: "The user needs setup instructions"
+```markdown
+# ❌ BAD - Creating setup guide unprompted
+User: "Initialize the FastAPI app"
+
+AI creates:
+- app/main.py ✓
+- SETUP.md ❌ (not requested)
+- INSTALL.md ❌ (not requested)
+
+# ✅ GOOD - Put essential setup in code comments
+User: "Initialize the FastAPI app"
+
+AI creates:
+- app/main.py ✓
+
+# app/main.py
+"""
+Biome FastAPI Application
+
+Setup:
+1. pip install -r requirements.txt
+2. cp .env.example .env
+3. python -m uvicorn app.main:app --reload
+
+Runs on: http://localhost:8000
+"""
+from fastapi import FastAPI
+
+app = FastAPI(title="Biome API")
+```
+
+### Scenario: "Multiple files need coordination"
+```markdown
+# ❌ BAD - Creating orchestration docs
+User: "Set up the microservices"
+
+AI creates:
+- api-service/main.py ✓
+- vision-service/extract_pose.py ✓
+- agent-service/coaching_agent.py ✓
+- docs/microservices-guide.md ❌ (not requested)
+- ARCHITECTURE.md ❌ (not requested)
+
+# ✅ GOOD - Create runnable scripts with comments
+User: "Set up the microservices"
+
+AI creates:
+- api-service/main.py ✓
+- vision-service/extract_pose.py ✓
+- agent-service/coaching_agent.py ✓
+- docker-compose.yml ✓ (functional, not documentation)
+- start.sh ✓ (executable, not documentation)
+
+# start.sh
+#!/bin/bash
+# Start all Biome services
+
+echo "Starting FastAPI..."
+cd api-service && uvicorn main:app --port 8000 &
+
+echo "Starting Vision Service..."
+cd vision-service && python extract_pose.py &
+
+echo "Starting ADK Agent..."
+cd agent-service && python coaching_agent.py &
+
+echo "All services running!"
+```
+
+### Scenario: "User asks for examples"
+```markdown
+# ❌ BAD - Creating examples directory with markdown
+User: "Show me how to use the API"
+
+AI creates:
+- examples/README.md ❌
+- examples/upload-video.md ❌
+
+# ✅ GOOD - Create runnable example scripts
+User: "Show me how to use the API"
+
+AI creates:
+- examples/test_upload.py ✓ (executable Python)
+
+# examples/test_upload.py
+"""
+Example: Upload video to Biome API
+
+Run: python examples/test_upload.py
+"""
+import requests
+
+# Upload video
+response = requests.post(
+    "http://localhost:8000/v1/analysis/upload",
+    files={"video": open("squat.mp4", "rb")},
+    data={"exerciseName": "Squat"}
+)
+
+print(f"Session ID: {response.json()['sessionId']}")
+```
+
+## Specific Project Patterns
+
+### Pattern: Configuration over documentation
+```markdown
+# ❌ BAD - Documenting environment variables
+Creating: docs/environment-variables.md
+
+# ✅ GOOD - Self-documenting .env.example
+Creating: .env.example
+
+# .env.example - Copy to .env and fill in values
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/biome_coaching
+
+# AWS S3 (optional for local dev)
+AWS_ACCESS_KEY_ID=your_key_here
+AWS_SECRET_ACCESS_KEY=your_secret_here
+S3_BUCKET_NAME=biome-videos
+
+# Google ADK
+GEMINI_API_KEY=your_gemini_key_here
+
+# Server
+PORT=8000
+DEBUG=true
+```
+
+### Pattern: Code comments over separate docs
+```markdown
+# ❌ BAD - Separate API documentation
+Creating: docs/api/endpoints.md listing all routes
+
+# ✅ GOOD - OpenAPI/Swagger auto-generated docs
+FastAPI automatically generates docs at /docs endpoint.
+Add docstrings to route functions - that's the documentation!
+
+@router.post("/analysis/upload")
+async def upload_video(file: UploadFile):
+    """
+    Upload video for form analysis.
+    
+    - **file**: Video file (MP4/MOV/AVI/WebM, max 100MB, max 5min)
+    - **exercise_name**: Exercise type
+    
+    Returns session_id and WebSocket URL for real-time updates.
+    """
+```
+
+## Acceptable Markdown Files (Exceptions)
+
+These are OK to create **ONLY if explicitly requested**:
+
+### 1. Project root README (if user asks)
+```markdown
+User: "Create a README for the project"
+✅ OK to create: README.md (in project root only)
+```
+
+### 2. API documentation (if requested)
+```markdown
+User: "Document the API endpoints"
+✅ OK to create: docs/API.md (since user explicitly asked)
+```
+
+### 3. Deployment guide (if requested)
+```markdown
+User: "How do I deploy this?"
+✅ OK to create: DEPLOYMENT.md (since user explicitly asked)
+```
+
+### 4. Hackathon submission requirements
+```markdown
+User: "Prepare files for Devpost submission"
+✅ OK to create: DEVPOST.md (submission-specific)
+```
+
+## Alternative Solutions
+
+### 1. Use inline code comments instead of markdown
+```python
+# ✅ GOOD - Comments explain complex logic
+def calculate_improvement_trend(scores: List[float]) -> str:
+    """
+    Determine if user is improving, stable, or declining.
+    
+    Algorithm:
+    - Compare last 3 scores to previous 3
+    - If average increased by >0.5: improving
+    - If changed by <0.3: stable
+    - Otherwise: declining
+    """
+    if len(scores) < 6:
+        return "stable"
+    
+    recent = sum(scores[-3:]) / 3
+    previous = sum(scores[-6:-3]) / 3
+    # ... implementation
+```
+
+### 2. Use docstrings for module documentation
+```python
+# app/services/upload_service.py
+"""
+Upload Service - Handles video file uploads
+
+Responsibilities:
+- Validate file format, size, duration
+- Generate unique session IDs
+- Save to temporary storage
+- Trigger vision processing pipeline
+
+Usage:
+    service = UploadService()
+    session = await service.handle_upload(file)
+"""
+```
+
+### 3. Use configuration files as documentation
+```yaml
+# docker-compose.yml (self-documenting infrastructure)
+version: '3.8'
+services:
+  api:
+    build: ./api-service
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/biome
+    depends_on:
+      - db
+  
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=biome_coaching
+      - POSTGRES_PASSWORD=password
+```
+
+---
+
+## 🏗️ ADK Framework Requirements (ALWAYS Follow)
+
+### Required Files for ADK Compliance
+
+Google ADK has strict structure conventions. **ALWAYS create these:**
+
+```
+biome_coaching_agent/
+├── __init__.py           # REQUIRED: Must contain "from . import agent"
+├── agent.py              # REQUIRED: Must define "root_agent = Agent(...)"
+├── config.py             # Load environment variables, GCP credentials
+└── tools/
+    ├── __init__.py       # REQUIRED: Import all tools
+    ├── upload_video.py
+    ├── extract_pose_landmarks.py
+    ├── analyze_workout_form.py
+    └── save_analysis_results.py
+```
+
+**Critical ADK Patterns:**
+- All tools return `dict` with `"status"` key
+- All tools accept `ToolContext` parameter
+- Use type hints on all function parameters
+- Docstrings required (judges will read your code!)
+
+### ADK Agent Structure (judges look for this)
+```python
+# biome_coaching_agent/agent.py
+from google.adk.agents import Agent
+from .tools import upload_video, extract_pose_landmarks
+
+root_agent = Agent(
+    name="biome_coaching_agent",
+    model="gemini-2.0-flash",  # Use Flash for speed + cost
+    description="AI fitness form coaching agent",
+    instruction="""Detailed coaching instructions...""",
+    tools=[upload_video, extract_pose_landmarks, ...]
+)
+```
+
+---
+
+## ☁️ Cloud Run Deployment (Required for Submission)
+
+### ALWAYS Create These for Cloud Run
+
+When user says "prepare deployment" or "deploy to Cloud Run":
+
+✅ **MUST CREATE:**
+```dockerfile
+# Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+✅ **MUST CREATE:**
+```
+# .dockerignore
+__pycache__/
+*.pyc
+.env
+.git/
+uploads/
+test_videos/
+```
+
+✅ **MUST CREATE:**
+```yaml
+# cloudbuild.yaml (if using Cloud Build)
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/biome-agent', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/biome-agent']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args:
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'biome-agent'
+      - '--image=gcr.io/$PROJECT_ID/biome-agent'
+      - '--region=us-central1'
+      - '--memory=4Gi'
+      - '--timeout=300s'
+```
+
+❌ **DON'T CREATE:** docs/deployment-guide.md (waste of time)
+
+---
+
+## 🎁 Bonus Points Strategy (Worth +1.6 Points!)
+
+The hackathon awards bonus points. Help user maximize score:
+
+### 1. Use Gemini Model (+0.4 points) ✅
+**Already doing:** Using `gemini-2.0-flash` in agent.py
+
+### 2. Multiple Cloud Run Services (+0.4 points)
+**Strategy:** Deploy frontend + backend as separate Cloud Run services
+
+When user asks about deployment, **suggest:**
+```
+"Should we deploy frontend separately on Cloud Run for +0.4 bonus points?
+This would give us:
+- biome-backend (FastAPI + ADK)
+- biome-frontend (React)
+Both on Cloud Run = bonus points!"
+```
+
+### 3. Blog Post (+0.4 points)
+**When:** After demo works, before submission
+
+When user says "prepare submission", **remind:**
+```
+"Want +0.4 bonus points? Publish a blog post on Medium/dev.to about:
+- Building with Google ADK
+- Cloud Run deployment experience
+- Challenges faced and solved
+Must mention: 'Created for Cloud Run Hackathon'"
+```
+
+### 4. Social Media (+0.4 points)
+**When:** After demo works
+
+**Remind user:**
+```
+"Post on LinkedIn/X with #CloudRunHackathon for +0.4 points!
+Include:
+- Demo video/GIF
+- Architecture diagram
+- Link to repo"
+```
+
+---
+
+## 📋 Hackathon Submission Requirements (Create ONLY When Requested)
+
+### When user says "prepare submission" or "prepare for Devpost":
+
+✅ **MUST CREATE (required by contest):**
+1. **README.md** (public GitHub repo requirement)
+   - Setup instructions
+   - Technologies used (ADK, Cloud Run, Gemini, MediaPipe)
+   - Demo video link
+   - Architecture diagram
+
+2. **Architecture Diagram** (can be ASCII art in README or separate file)
+   ```
+   ┌─────────────┐
+   │  React UI   │
+   └──────┬──────┘
+          │ HTTP
+   ┌──────▼──────────┐
+   │  Cloud Run      │
+   │  FastAPI + ADK  │
+   └──────┬──────────┘
+          │
+   ┌──────▼──────────┐
+   │  Gemini 2.0     │
+   │  MediaPipe      │
+   └─────────────────┘
+   ```
+
+3. **Demo Video** (max 3 minutes)
+   - Show: Upload video → Processing → Results with coaching cues
+   - Emphasize: Real-time feedback, ADK reasoning, Cloud Run scalability
+
+**Create these ONLY when explicitly requested for submission.**
+
+---
+
+## 💎 Code Quality for Judges (40% of Score!)
+
+Judges will READ your code. Make it impressive:
+
+### ALWAYS Include:
+```python
+# ✅ Type hints (shows professionalism)
+def upload_video(
+    video_file_path: str,
+    exercise_name: str,
+    tool_context: ToolContext = None
+) -> dict:
+    """
+    Upload workout video for form analysis.
+    
+    Validates file format (MP4/MOV/AVI/WebM), size (<100MB),
+    and duration (<5min) before creating analysis session.
+    
+    Args:
+        video_file_path: Local path to uploaded video
+        exercise_name: Exercise type (Squat, Deadlift, etc.)
+        tool_context: ADK context for state management
+        
+    Returns:
+        dict: Session ID and video metadata
+            {
+                "status": "success",
+                "session_id": "uuid",
+                "video_url": "path/to/video.mp4"
+            }
+    """
+```
+
+### ALWAYS Handle Errors:
+```python
+# ✅ Production-ready error handling
+try:
+    # Implementation
+    return {"status": "success", "data": result}
+except ValidationError as e:
+    return {"status": "error", "message": f"Invalid input: {e}"}
+except Exception as e:
+    logger.error(f"Unexpected error: {e}")
+    return {"status": "error", "message": "Internal server error"}
+```
+
+### NEVER Write Sloppy Code:
+```python
+# ❌ This will lose points with judges
+def upload(f, n):  # No types, no docs
+    id = uuid.uuid4()
+    return id
+```
+
+---
+
+## 🚦 Priority System: What to Build When
+
+### Phase 1-3: Pure Development (No Docs)
+**User says:** "Implement X" or "Build Y"  
+**You do:** Create .py files, NO markdown
+
+### Phase 4: Deployment Prep
+**User says:** "Deploy to Cloud Run"  
+**You do:** Create Dockerfile, .dockerignore, deploy script
+
+### Phase 5: Submission Prep (ONLY at end)
+**User says:** "Prepare for submission" or "Get ready for Devpost"  
+**You do:** Create README.md, ensure architecture diagram exists
+
+---
+
+## 📜 Assistant Behavior Checklist
+
+**During Development (Phases 1-4):**
+- ✅ Create .py files with docstrings and type hints
+- ✅ Use ADK structure conventions (agent.py, tools/)
+- ✅ Add error handling to every function
+- ✅ Use parameterized SQL queries (never f-strings)
+- ✅ Create .env.example, docker-compose.yml, Dockerfile
+- ❌ NEVER create README.md unprompted
+- ❌ NEVER create docs/ directory
+- ❌ NEVER create markdown guides
+
+**For Deployment (Phase 4):**
+- ✅ Create Dockerfile optimized for Cloud Run
+- ✅ Create .dockerignore and .gcloudignore
+- ✅ Suggest multiple services for bonus points
+- ✅ Test deployment command in chat before running
+
+**For Submission (Phase 5 only):**
+- ✅ Create README.md with setup instructions
+- ✅ Include architecture diagram
+- ✅ Remind about bonus points (blog, social media)
+- ✅ Verify all requirements: public repo, demo video, description
+
+---
+
+## 🎯 Remember: You're Building to Win
+
+**Judges look for:**
+1. **Clean ADK code** (proper structure, docstrings, error handling)
+2. **Working demo** (can they test it? does it work?)
+3. **Clear value** (solves real problem - injury prevention)
+4. **Production-ready** (error handling, logging, not hacky)
+
+**Judges DON'T care about:**
+- Extensive markdown documentation
+- Complex folder structures
+- Over-engineering
+
+**Winning formula:**
+- 70% effort: Core functionality (video → analysis → results)
+- 20% effort: Deployment (Cloud Run, smooth setup)
+- 10% effort: Submission materials (README, demo video)
+
+---
+
+## 🏆 Final Rule: Code Like You're Being Judged (Because You Are!)
+
+Every .py file you create will be reviewed by judges.
+
+Write code you'd be proud to show at a technical interview.
+
+**After demo works:** THEN create submission materials.
+
+**Before demo works:** Focus on impressive functionality, not documentation.
+
+Let's win this hackathon! 🚀
