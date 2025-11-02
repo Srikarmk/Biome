@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import Webcam from "react-webcam";
 import Navbar from "../components/Navbar";
@@ -18,6 +18,24 @@ export default function Upload() {
   const navigate = useNavigate();
 
   const exercise = localStorage.getItem("selectedExercise") || "Unknown";
+
+  // Cleanup on unmount to fix memory leaks
+  useEffect(() => {
+    return () => {
+      // Stop webcam stream
+      if (webcamRef.current?.stream) {
+        webcamRef.current.stream.getTracks().forEach(track => track.stop());
+      }
+      // Clear recording interval
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+      // Stop media recorder
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
   // File upload handler
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -65,6 +83,12 @@ export default function Upload() {
 
     if (recordingIntervalRef.current) {
       clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+
+    // Stop webcam stream after recording
+    if (webcamRef.current?.stream) {
+      webcamRef.current.stream.getTracks().forEach(track => track.stop());
     }
   };
 
@@ -82,12 +106,14 @@ export default function Upload() {
   // Submit for analysis
   const handleAnalyze = () => {
     if (videoFile) {
-      // Handle file upload
-      navigate("/analyzing", { state: { video: videoFile, exercise } });
+      // Handle file upload - create object URL for playback
+      const videoUrl = URL.createObjectURL(videoFile);
+      navigate("/analyzing", { state: { video: videoFile, exercise, videoUrl } });
     } else if (recordedChunks.length > 0) {
       // Handle recorded video
       const blob = new Blob(recordedChunks, { type: "video/webm" });
-      navigate("/analyzing", { state: { video: blob, exercise } });
+      const videoUrl = URL.createObjectURL(blob);
+      navigate("/analyzing", { state: { video: blob, exercise, videoUrl } });
     }
   };
 

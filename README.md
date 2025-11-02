@@ -121,29 +121,54 @@ Optional but recommended (per ADK docs):
 
 ---
 
-## Quickstart (2 minutes)
+## Quickstart (2 minutes) - Full Stack Integration
+
+### 🚀 **NEW: Complete Frontend + Backend Integration Available!**
+
 ```powershell
 git clone https://github.com/<your-org>/biome_agent.git
 cd biome_agent
 
-# Python env (Windows PowerShell)
+# 1. Backend Setup
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -U pip
 pip install -r requirements.txt
 
-# Database (psql)
+# 2. Database Setup
 psql -U postgres -c "CREATE DATABASE biome_coaching;"
 psql -U postgres -d biome_coaching -f schema.sql
 
-# Optional: point to a non-default DB
-$env:DATABASE_URL = "postgresql://<user>:<pass>@<host>:<port>/biome_coaching"
+# 3. Environment Configuration
+$env:GOOGLE_API_KEY = "your-gemini-api-key"
+$env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/biome_coaching"
 
-# Run (choose one)
-adk web biome_coaching_agent
-# or
-adk run biome_coaching_agent
+# 4. Frontend Setup (separate terminal)
+npm install
+
+# 5. Start Backend (Terminal 1)
+python api_server.py
+# Backend runs on http://localhost:8000
+
+# 6. Start Frontend (Terminal 2)
+npm start
+# Frontend runs on http://localhost:3000
 ```
+
+**Or use the convenience scripts:**
+```powershell
+# Terminal 1
+.\start_backend.ps1
+
+# Terminal 2
+.\start_frontend.ps1
+```
+
+### 🎯 **What You Get:**
+- ✅ Beautiful React UI with webcam recording
+- ✅ Real AI-powered analysis using MediaPipe + Gemini
+- ✅ Complete workflow: Upload → Analyze → Results
+- ✅ Database persistence with PostgreSQL
+- ✅ Real-time progress tracking
 
 ---
 
@@ -195,7 +220,23 @@ $env:DATABASE_URL = "postgresql://<user>:<pass>@<host>:<port>/biome_coaching"
 
 ## Run
 
-This project follows ADK’s agent discovery convention. The root agent lives at `biome_coaching_agent/agent.py` and exports `root_agent`.
+### 🌟 **Recommended: Full Stack Mode (Frontend + Backend)**
+
+**Best for demos, testing, and development:**
+
+```powershell
+# Terminal 1 - Backend
+python api_server.py
+
+# Terminal 2 - Frontend  
+npm start
+```
+
+Then visit: **http://localhost:3000**
+
+### 🔧 **Alternative: ADK-Only Mode**
+
+This project follows ADK's agent discovery convention. The root agent lives at `biome_coaching_agent/agent.py` and exports `root_agent`.
 
 Common options:
 - ADK Web UI
@@ -208,12 +249,12 @@ adk web biome_coaching_agent
 adk run biome_coaching_agent
 ```
 
-- API server
+- API server (basic)
 ```bash
 adk api_server biome_coaching_agent
 ```
 
-If ADK is not on your PATH, install per ADK docs or run via your environment that includes ADK.
+**Note:** The custom `api_server.py` is preferred over `adk api_server` for frontend integration as it includes video upload endpoints and CORS configuration.
 
 ---
 
@@ -261,17 +302,18 @@ psql -U postgres -d biome_coaching -f schema.sql
 ---
 
 ## Development Notes
-- Agent defined in `biome_coaching_agent/agent.py` with tools: `upload_video`, `extract_pose_landmarks`
+- Agent defined in `biome_coaching_agent/agent.py` with tools: `upload_video`, `extract_pose_landmarks`, `analyze_workout_form`, `save_analysis_results`
 - Database connection helper: `db/connection.py`
-- Replace or extend the `extract_pose_landmarks` tool to integrate your CV/ML pipeline
+- Custom API server: `api_server.py` provides REST endpoints for frontend integration
 
 ---
 
 ## Troubleshooting
 - Cannot connect to DB: verify Postgres is running and `DATABASE_URL` is correct.
-- `psycopg2` build issues on Windows: `requirements.txt` uses `psycopg2-binary` for convenience.
-- Video fails to open: confirm the file path is correct and codec is supported.
+- `psycopg` installation issues: `requirements.txt` uses `psycopg[binary]>=3.1.0` for easier installation.
+- Video fails to open: confirm the file path is correct and codec is supported (mp4, mov, avi, webm).
 - No person detected: try a brighter video, centered subject, and slower movement.
+- Port conflicts: Backend defaults to 8080 (Cloud Run standard). For local dev, use `$env:PORT=8000`.
 
 ---
 

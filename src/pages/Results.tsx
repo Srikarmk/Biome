@@ -84,8 +84,30 @@ function MetricCard({ name, value }: { name: string; value: Metric }) {
 export default function Results() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { exercise, results }: { exercise: string; results: AnalysisResults } =
-    location.state;
+  
+  // Safely extract state with fallback
+  const { exercise, results, videoUrl } = location.state || {};
+
+  // Handle missing state (e.g., direct navigation or refresh)
+  if (!exercise || !results) {
+    return (
+      <div className="min-h-screen bg-bg flex items-center justify-center">
+        <Navbar />
+        <div className="text-center px-4">
+          <h1 className="text-3xl font-bold text-text mb-4">No Results Found</h1>
+          <p className="text-text-secondary mb-8">
+            It looks like you navigated here directly. Please upload and analyze a video first.
+          </p>
+          <button
+            onClick={() => navigate("/analyze")}
+            className="bg-primary-500 hover:bg-primary-600 text-white px-6 py-3 rounded-lg font-semibold transition-colors"
+          >
+            Start New Analysis
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const { overallScore, issues, strengths, metrics, recommendations } = results;
 
@@ -120,15 +142,17 @@ export default function Results() {
         </div>
 
         {/* Video Player with Markers */}
-        <div className="mb-12">
-          <VideoPlayer
-            videoUrl="/api/placeholder/800/450"
-            markers={issues.map((i) => ({
-              time: i.frameStart / 30,
-              type: i.severity,
-            }))}
-          />
-        </div>
+        {videoUrl && (
+          <div className="mb-12">
+            <VideoPlayer
+              videoUrl={videoUrl}
+              markers={issues.map((i) => ({
+                time: i.frameStart / 30,
+                type: i.severity,
+              }))}
+            />
+          </div>
+        )}
 
         {/* Overall Score */}
         <div className="bg-surface rounded-xl p-8 mb-12">

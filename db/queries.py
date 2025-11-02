@@ -8,6 +8,15 @@ from decimal import Decimal
 
 import psycopg
 
+# Import logger - avoid circular import by importing locally if needed
+try:
+  from biome_coaching_agent.logging_config import get_logger
+  logger = get_logger(__name__)
+except ImportError:
+  # Fallback to basic logging if biome_coaching_agent not available
+  import logging
+  logger = logging.getLogger(__name__)
+
 
 def ping(conn: psycopg.Connection) -> bool:
   """Simple connectivity check."""
@@ -28,17 +37,28 @@ def create_analysis_session(
   file_size: Optional[int],
 ) -> str:
   """Create a new analysis session record."""
-  cur = conn.cursor()
-  cur.execute(
-    (
-      "INSERT INTO analysis_sessions "
-      "(id, user_id, exercise_name, video_url, video_duration, file_size, status, created_at) "
-      "VALUES (%s, %s, %s, %s, %s, %s, 'pending', NOW()) RETURNING id"
-    ),
-    (session_id, user_id, exercise_name, video_url, duration, file_size),
+  logger.debug(
+    f"Creating analysis session - id: {session_id}, exercise: {exercise_name}, "
+    f"user_id: {user_id}, file_size: {file_size}"
   )
-  row = cur.fetchone()
-  return row[0]
+  
+  try:
+    cur = conn.cursor()
+    cur.execute(
+      (
+        "INSERT INTO analysis_sessions "
+        "(id, user_id, exercise_name, video_url, video_duration, file_size, status, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, 'pending', NOW()) RETURNING id"
+      ),
+      (session_id, user_id, exercise_name, video_url, duration, file_size),
+    )
+    row = cur.fetchone()
+    created_id = row[0]
+    logger.info(f"Analysis session created successfully: {created_id}")
+    return created_id
+  except psycopg.Error as e:
+    logger.error(f"Failed to create analysis session {session_id}: {e}", exc_info=True)
+    raise
 
 
 def get_analysis_session(
@@ -58,28 +78,40 @@ def update_session_status(
   error_message: Optional[str] = None,
 ) -> None:
   """Update analysis session status."""
-  cur = conn.cursor()
-  if status == "completed":
-    cur.execute(
-      (
-        "UPDATE analysis_sessions "
-        "SET status = %s, error_message = %s, completed_at = NOW() WHERE id = %s"
-      ),
-      (status, error_message, session_id),
-    )
-  elif status == "processing":
-    cur.execute(
-      (
-        "UPDATE analysis_sessions "
-        "SET status = %s, error_message = %s, started_at = COALESCE(started_at, NOW()) WHERE id = %s"
-      ),
-      (status, error_message, session_id),
-    )
-  else:
-    cur.execute(
-      "UPDATE analysis_sessions SET status = %s, error_message = %s WHERE id = %s",
-      (status, error_message, session_id),
-    )
+  logger.debug(f"Updating session {session_id} status to: {status}")
+  
+  try:
+    cur = conn.cursor()
+    if status == "completed":
+      cur.execute(
+        (
+          "UPDATE analysis_sessions "
+          "SET status = %s, error_message = %s, completed_at = NOW() WHERE id = %s"
+        ),
+        (status, error_message, session_id),
+      )
+      logger.info(f"Session {session_id} marked as completed")
+    elif status == "processing":
+      cur.execute(
+        (
+          "UPDATE analysis_sessions "
+          "SET status = %s, error_message = %s, started_at = COALESCE(started_at, NOW()) WHERE id = %s"
+        ),
+        (status, error_message, session_id),
+      )
+      logger.info(f"Session {session_id} marked as processing")
+    else:
+      cur.execute(
+        "UPDATE analysis_sessions SET status = %s, error_message = %s WHERE id = %s",
+        (status, error_message, session_id),
+      )
+      if error_message:
+        logger.warning(f"Session {session_id} status updated to {status} with error: {error_message}")
+      else:
+        logger.info(f"Session {session_id} status updated to: {status}")
+  except psycopg.Error as e:
+    logger.error(f"Failed to update session {session_id} status: {e}", exc_info=True)
+    raise
 
 
 # Phase 3: Analysis result persistence

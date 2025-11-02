@@ -8,6 +8,11 @@ for hackathon MVP.
 from typing import Any, Dict, List
 
 from google.adk.tools.tool_context import ToolContext
+from biome_coaching_agent.logging_config import get_logger  # type: ignore
+from biome_coaching_agent.exceptions import AnalysisError, ValidationError  # type: ignore
+
+# Initialize logger
+logger = get_logger(__name__)
 
 
 def _calculate_squat_score(metrics: Dict[str, Any], frames: List[Dict[str, Any]]) -> float:
@@ -264,39 +269,57 @@ def analyze_workout_form(
       metrics: [{metric_name, actual_value, target_value, status}, ...],
       strengths: [str, ...],
       recommendations: [{recommendation_text, priority}, ...],
-    }
+    } or {status, error_type, message} on error
   """
+  logger.info(f"Starting form analysis - exercise: {exercise_name}")
+  
   try:
+    # Validate pose data status
     if pose_data.get("status") != "success":
-      return {"status": "error", "message": "Pose data extraction failed"}
+      error_msg = pose_data.get("message", "Pose data extraction failed")
+      logger.error(f"Pose data invalid: {error_msg}")
+      raise ValidationError(f"Invalid pose data: {error_msg}")
 
-    # For hackathon MVP: Focus on squat analysis only
+    # Validate exercise is supported
     if exercise_name.lower() not in ["squat", "squats"]:
-      return {
-        "status": "error",
-        "message": f"Exercise '{exercise_name}' not yet supported. Currently only 'Squat' is available.",
-      }
+      logger.warning(f"Unsupported exercise requested: {exercise_name}")
+      raise ValidationError(
+        f"Exercise '{exercise_name}' not yet supported. Currently only 'Squat' is available."
+      )
 
     metrics = pose_data.get("metrics", {})
     frames = pose_data.get("frames", [])
 
     if not frames:
-      return {"status": "error", "message": "No frame data available for analysis"}
+      logger.error("No frame data available for analysis")
+      raise ValidationError("No frame data available for analysis")
+    
+    logger.debug(f"Analyzing {len(frames)} frames with metrics: {list(metrics.keys())}")
 
     # Calculate overall score
     overall_score = _calculate_squat_score(metrics, frames)
+    logger.debug(f"Overall score calculated: {overall_score}/10")
 
     # Identify issues
     issues = _identify_squat_issues(metrics, frames)
+    logger.debug(f"Identified {len(issues)} form issues")
 
     # Generate metrics
     metrics_list = _generate_metrics(metrics)
 
     # Generate strengths
     strengths = _generate_strengths(metrics, issues)
+    logger.debug(f"Generated {len(strengths)} strengths")
 
     # Generate recommendations
     recommendations = _generate_recommendations(issues, overall_score)
+    logger.debug(f"Generated {len(recommendations)} recommendations")
+
+    logger.info(
+      f"Form analysis complete - exercise: {exercise_name}, "
+      f"score: {overall_score}/10, issues: {len(issues)}, "
+      f"strengths: {len(strengths)}"
+    )
 
     return {
       "status": "success",
@@ -307,6 +330,20 @@ def analyze_workout_form(
       "strengths": strengths,
       "recommendations": recommendations,
     }
+  
+  except ValidationError as ve:
+    logger.warning(f"Validation error during analysis: {ve}")
+    return {
+      "status": "error",
+      "error_type": "validation",
+      "message": str(ve)
+    }
+  
   except Exception as e:
-    return {"status": "error", "message": f"Analysis failed: {str(e)}"}
+    logger.critical(f"Unexpected error during form analysis: {e}", exc_info=True)
+    return {
+      "status": "error",
+      "error_type": "unknown",
+      "message": f"Analysis failed: {str(e)}"
+    }
 

@@ -7,22 +7,30 @@ For hackathon/local dev, this copies to a local `uploads/` directory.
 import os
 import shutil
 import uuid
-from datetime import datetime
 from typing import Optional
 
 from google.adk.tools.tool_context import ToolContext
 
 from db.connection import get_db_connection  # type: ignore
 from db import queries  # type: ignore
+from biome_coaching_agent.logging_config import get_logger  # type: ignore
+from biome_coaching_agent.exceptions import (  # type: ignore
+    ValidationError,
+    DatabaseError,
+)
 
+# Initialize logger
+logger = get_logger(__name__)
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm"}
 MAX_MB = 100
 
 
 def _ensure_uploads_dir() -> str:
+  """Ensure uploads directory exists."""
   uploads_dir = os.path.join(os.getcwd(), "uploads")
   os.makedirs(uploads_dir, exist_ok=True)
+  logger.debug(f"Uploads directory ensured: {uploads_dir}")
   return uploads_dir
 
 
@@ -42,27 +50,54 @@ def upload_video(
     tool_context: ADK tool context (unused).
 
   Returns:
-    dict: {status, session_id, video_url}
+    dict: {status, session_id, video_url, file_size_mb} or {status, error_type, message} on error
   """
+  logger.info(
+    f"Video upload initiated - exercise: {exercise_name}, "
+    f"user_id: {user_id}, path: {video_file_path}"
+  )
+  
   try:
+    # Validation: File exists
     if not os.path.isfile(video_file_path):
-      return {"status": "error", "message": "Video file not found"}
+      logger.error(f"Video file not found: {video_file_path}")
+      raise ValidationError(f"Video file not found: {video_file_path}")
 
+    # Validation: File extension
     ext = os.path.splitext(video_file_path)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
-      return {"status": "error", "message": f"Unsupported file type: {ext}"}
+      logger.error(f"Unsupported file type: {ext}")
+      raise ValidationError(
+        f"Unsupported file type: {ext}. "
+        f"Allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+      )
 
+    # Validation: File size
     file_size_bytes = os.path.getsize(video_file_path)
+    file_size_mb = file_size_bytes / (1024 * 1024)
+    logger.debug(f"File size: {file_size_mb:.2f} MB")
+    
     if file_size_bytes > MAX_MB * 1024 * 1024:
-      return {"status": "error", "message": "File exceeds 100MB limit"}
+      logger.error(f"File too large: {file_size_mb:.2f} MB (max: {MAX_MB} MB)")
+      raise ValidationError(
+        f"File exceeds {MAX_MB}MB limit (size: {file_size_mb:.2f} MB)"
+      )
 
+    # Copy file to uploads directory
     uploads_dir = _ensure_uploads_dir()
     session_id = str(uuid.uuid4())
     dest_filename = f"{session_id}{ext}"
     dest_path = os.path.join(uploads_dir, dest_filename)
-    shutil.copy2(video_file_path, dest_path)
+    
+    logger.info(f"Copying video to: {dest_path}")
+    try:
+      shutil.copy2(video_file_path, dest_path)
+      logger.info(f"Video copied successfully - session_id: {session_id}")
+    except (IOError, OSError) as copy_err:
+      logger.error(f"Failed to copy video file: {copy_err}")
+      raise ValidationError(f"Failed to copy video file: {copy_err}")
 
-    # Best effort mime type guess
+    # Determine MIME type
     mime_type = {
       ".mp4": "video/mp4",
       ".mov": "video/quicktime",
@@ -70,20 +105,59 @@ def upload_video(
       ".webm": "video/webm",
     }.get(ext, "application/octet-stream")
 
-    with get_db_connection() as conn:
-      queries.create_analysis_session(
-        conn=conn,
-        session_id=session_id,
-        user_id=user_id,
-        exercise_name=exercise_name,
-        video_url=dest_path,
-        duration=None,
-        file_size=file_size_bytes,
+    # Create database record
+    try:
+      with get_db_connection() as conn:
+        queries.create_analysis_session(
+          conn=conn,
+          session_id=session_id,
+          user_id=user_id,
+          exercise_name=exercise_name,
+          video_url=dest_path,
+          duration=None,
+          file_size=file_size_bytes,
+        )
+        queries.update_session_status(conn, session_id, "processing")
+        
+      logger.info(
+        f"Database record created - session_id: {session_id}, "
+        f"exercise: {exercise_name}, size: {file_size_mb:.2f} MB"
       )
-      queries.update_session_status(conn, session_id, "processing")
+    except Exception as db_err:
+      logger.error(
+        f"Database error during session creation: {db_err}",
+        exc_info=True
+      )
+      # Clean up uploaded file since DB failed
+      if os.path.exists(dest_path):
+        try:
+          os.remove(dest_path)
+          logger.debug(f"Cleaned up orphaned file: {dest_path}")
+        except Exception as cleanup_err:
+          logger.warning(f"Failed to cleanup orphaned file: {cleanup_err}")
+      raise DatabaseError(f"Failed to create session record: {db_err}")
 
-    return {"status": "success", "session_id": session_id, "video_url": dest_path}
+    return {
+      "status": "success",
+      "session_id": session_id,
+      "video_url": dest_path,
+      "file_size_mb": round(file_size_mb, 2),
+    }
+
+  except ValidationError as ve:
+    logger.warning(f"Validation error: {ve}")
+    return {"status": "error", "error_type": "validation", "message": str(ve)}
+  
+  except DatabaseError as de:
+    logger.error(f"Database error: {de}", exc_info=True)
+    return {"status": "error", "error_type": "database", "message": str(de)}
+  
   except Exception as e:
-    return {"status": "error", "message": str(e)}
+    logger.critical(f"Unexpected error during video upload: {e}", exc_info=True)
+    return {
+      "status": "error",
+      "error_type": "unknown",
+      "message": f"Unexpected error: {str(e)}"
+    }
 
 

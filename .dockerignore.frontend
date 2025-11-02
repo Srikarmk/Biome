@@ -1,0 +1,38 @@
+# Backend files (not needed in frontend container)
+biome_coaching_agent/
+db/
+api_server.py
+requirements.txt
+schema.sql
+.venv/
+__pycache__/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Development
+.git/
+.gitignore
+*.md
+!README.md
+.env
+.env.local
+
+# Test files
+test_videos/
+*.mp4
+
+# Documentation
+docs/
+ADK/
+ai-task-templates-main/
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+
+# Scripts
+start_*.ps1
+

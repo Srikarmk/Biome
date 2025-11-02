@@ -13,6 +13,16 @@ from google.adk.tools.tool_context import ToolContext
 
 from db.connection import get_db_connection  # type: ignore
 from db import queries  # type: ignore
+from biome_coaching_agent.logging_config import get_logger  # type: ignore
+from biome_coaching_agent.exceptions import (  # type: ignore
+    ValidationError,
+    PoseExtractionError,
+    DatabaseError,
+    SessionNotFoundError,
+)
+
+# Initialize logger
+logger = get_logger(__name__)
 
 
 def _angle_between(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float:
@@ -69,36 +79,62 @@ def extract_pose_landmarks(
     tool_context: ADK tool context (unused).
 
   Returns:
-    dict: {status, detected_exercise, total_frames, metrics, frames}
+    dict: {status, detected_exercise, total_frames, metrics, frames} or {status, error_type, message} on error
   """
+  logger.info(f"Starting pose extraction - session_id: {session_id}, fps: {fps}")
+  
   try:
-    with get_db_connection() as conn:
-      row = queries.get_analysis_session(conn, session_id)
+    # Get session from database
+    try:
+      with get_db_connection() as conn:
+        row = queries.get_analysis_session(conn, session_id)
+    except Exception as db_err:
+      logger.error(f"Database error fetching session {session_id}: {db_err}")
+      raise DatabaseError(f"Failed to fetch session: {db_err}")
+    
     if not row:
-      return {"status": "error", "message": "Session not found"}
+      logger.error(f"Session not found: {session_id}")
+      raise SessionNotFoundError(f"Session not found: {session_id}")
 
+    # Extract video path from row
     # Row layout depends on cursor factory; safest is to lookup by column order
-    # Assuming video_url is 4th or 5th; fallback to last non-null text
     video_url = None
     for col in row:
-      if isinstance(col, str) and ("/" in col or "\\" in col) and (col.endswith(".mp4") or col.endswith(".mov") or col.endswith(".avi") or col.endswith(".webm")):
+      if isinstance(col, str) and ("/" in col or "\\" in col) and (
+        col.endswith(".mp4") or col.endswith(".mov") or 
+        col.endswith(".avi") or col.endswith(".webm")
+      ):
         video_url = col
         break
+    
     if not video_url:
-      return {"status": "error", "message": "Video path not found in session"}
+      logger.error(f"No video path in session {session_id}")
+      raise ValidationError("Video path not found in session")
+    
+    logger.debug(f"Processing video: {video_url}")
 
+    # Open video
     cap = cv2.VideoCapture(video_url)
     if not cap.isOpened():
-      return {"status": "error", "message": "Failed to open video"}
+      logger.error(f"Failed to open video file: {video_url}")
+      raise PoseExtractionError(f"Failed to open video: {video_url}")
 
     native_fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    total_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_interval = max(int(round(native_fps / max(fps, 1))), 1)
+    logger.info(
+      f"Video opened - native_fps: {native_fps}, total_frames: {total_frame_count}, "
+      f"processing every {frame_interval} frames"
+    )
 
-    # Lazy import MediaPipe to avoid global import-time protobuf version conflicts
+    # Import MediaPipe (lazy import to avoid protobuf conflicts)
     try:
       import mediapipe as mp  # type: ignore
+      logger.debug("MediaPipe imported successfully")
     except Exception as imp_err:
-      return {"status": "error", "message": f"Failed to import MediaPipe: {imp_err}"}
+      logger.error(f"Failed to import MediaPipe: {imp_err}")
+      cap.release()
+      raise PoseExtractionError(f"MediaPipe import failed: {imp_err}")
 
     mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(model_complexity=1)
@@ -106,20 +142,27 @@ def extract_pose_landmarks(
     frames: List[Dict[str, Any]] = []
     angle_series: List[Dict[str, float]] = []
     idx = 0
+    processed_count = 0
+    no_detection_count = 0
+    
     while True:
       ret, frame = cap.read()
       if not ret:
         break
+      
       if idx % frame_interval != 0:
         idx += 1
         continue
 
       rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
       res = pose.process(rgb)
+      
       if not res.pose_landmarks:
+        no_detection_count += 1
         idx += 1
         continue
 
+      # Process landmarks
       lm_list: List[Dict[str, float]] = []
       for lm in res.pose_landmarks.landmark:
         lm_list.append({"x": float(lm.x), "y": float(lm.y), "z": float(lm.z)})
@@ -127,15 +170,29 @@ def extract_pose_landmarks(
       angles = _calc_joint_angles(lm_list)
       angle_series.append(angles)
       frames.append({"frame": idx, "landmarks": lm_list, "angles": angles})
+      processed_count += 1
       idx += 1
 
     cap.release()
     pose.close()
 
     if not frames:
-      return {"status": "error", "message": "No person detected in video"}
+      logger.warning(
+        f"No person detected in video: {video_url} "
+        f"(checked {idx} frames, no detections: {no_detection_count})"
+      )
+      raise PoseExtractionError(
+        "No person detected in video. Ensure the video shows a person in good lighting "
+        "with full body visible in frame."
+      )
 
     metrics = _aggregate_metrics(angle_series)
+    
+    logger.info(
+      f"Pose extraction complete - session: {session_id}, "
+      f"total_frames: {idx}, processed: {processed_count}, "
+      f"detected: {len(frames)}, skipped: {no_detection_count}"
+    )
 
     return {
       "status": "success",
@@ -144,7 +201,40 @@ def extract_pose_landmarks(
       "metrics": metrics,
       "frames": frames,
     }
+
+  except SessionNotFoundError as snfe:
+    logger.error(f"Session not found: {snfe}")
+    return {
+      "status": "error",
+      "error_type": "session_not_found",
+      "message": str(snfe)
+    }
+  
+  except (ValidationError, PoseExtractionError) as known_err:
+    logger.error(f"Pose extraction failed for {session_id}: {known_err}")
+    return {
+      "status": "error",
+      "error_type": type(known_err).__name__,
+      "message": str(known_err)
+    }
+  
+  except DatabaseError as de:
+    logger.error(f"Database error: {de}", exc_info=True)
+    return {
+      "status": "error",
+      "error_type": "database",
+      "message": str(de)
+    }
+  
   except Exception as e:
-    return {"status": "error", "message": str(e)}
+    logger.critical(
+      f"Unexpected error during pose extraction for {session_id}: {e}",
+      exc_info=True
+    )
+    return {
+      "status": "error",
+      "error_type": "unknown",
+      "message": f"Unexpected error: {str(e)}"
+    }
 
 
