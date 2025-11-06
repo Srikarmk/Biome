@@ -18,8 +18,8 @@ Copy-Item -Path ..\biome_agent\biome_coaching_agent -Destination . -Recurse
 Copy-Item -Path ..\biome_agent\db -Destination . -Recurse
 Copy-Item -Path ..\biome_agent\requirements.txt -Destination .
 Copy-Item -Path ..\biome_agent\schema.sql -Destination .
-Copy-Item -Path ..\biome_agent\Dockerfile -Destination .
-Copy-Item -Path ..\biome_agent\.dockerignore -Destination .
+Copy-Item -Path ..\biome_agent\Dockerfile.backend -Destination Dockerfile
+Copy-Item -Path ..\biome_agent\.dockerignore.backend -Destination .dockerignore
 Copy-Item -Path ..\biome_agent\LICENSE -Destination .
 
 # Create backend README (minimal)
