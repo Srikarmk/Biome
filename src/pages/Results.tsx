@@ -146,7 +146,7 @@ export default function Results() {
           <div className="mb-12">
             <VideoPlayer
               videoUrl={videoUrl}
-              markers={issues.map((i) => ({
+              markers={issues.map((i: Issue) => ({
                 time: i.frameStart / 30,
                 type: i.severity,
               }))}
@@ -195,7 +195,7 @@ export default function Results() {
           <h2 className="text-3xl font-bold text-text mb-8">
             🔴 Issues Detected ({issues.length})
           </h2>
-          {issues.map((issue, i) => (
+          {issues.map((issue: Issue, i: number) => (
             <IssueCard key={i} issue={issue} />
           ))}
         </section>
@@ -207,7 +207,7 @@ export default function Results() {
           </h2>
           <div className="bg-surface rounded-xl p-8">
             <ul className="space-y-3">
-              {strengths.map((strength, i) => (
+              {strengths.map((strength: string, i: number) => (
                 <li key={i} className="flex items-start">
                   <span className="text-success mr-3 mt-1">•</span>
                   <span className="text-text-secondary text-lg">
@@ -226,7 +226,7 @@ export default function Results() {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {Object.entries(metrics).map(([key, value]) => (
-              <MetricCard key={key} name={key} value={value} />
+              <MetricCard key={key} name={key} value={value as Metric} />
             ))}
           </div>
         </section>
@@ -239,7 +239,7 @@ export default function Results() {
               Based on your analysis, focus on:
             </p>
             <ol className="space-y-3">
-              {recommendations.map((rec, i) => (
+              {recommendations.map((rec: string, i: number) => (
                 <li key={i} className="flex items-start">
                   <span className="bg-primary-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-semibold mr-4 mt-1">
                     {i + 1}
