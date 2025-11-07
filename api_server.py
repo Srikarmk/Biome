@@ -53,14 +53,18 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # React dev server
         "http://localhost:3001",  # React dev server (alternate port)
+        "http://localhost:8080",  # React on 8080
+        "http://localhost:8081",  # React on 8081
         "http://localhost:8000",  # Self
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
         "http://127.0.0.1:8000",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],  # Only methods we use
+    allow_headers=["Content-Type", "Accept", "Authorization"],  # Only necessary headers
 )
 
 # Ensure uploads directory exists
@@ -86,27 +90,54 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with dependency verification"""
+    checks = {}
+    overall_healthy = True
+    
+    # Check database
     try:
-        # Test database connection
         with get_db_connection() as conn:
             queries.ping(conn)
-        
-        return {
-            "status": "healthy",
-            "service": "biome-coaching-api",
-            "database": "connected"
-        }
+        checks["database"] = "connected"
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "unhealthy",
-                "service": "biome-coaching-api",
-                "error": str(e)
-            }
-        )
+        checks["database"] = f"error: {str(e)}"
+        overall_healthy = False
+        logger.error(f"Health check - database failed: {e}")
+    
+    # Check MediaPipe availability
+    try:
+        import mediapipe
+        checks["mediapipe"] = "available"
+    except ImportError as e:
+        checks["mediapipe"] = f"missing: {str(e)}"
+        overall_healthy = False
+        logger.error(f"Health check - MediaPipe missing: {e}")
+    
+    # Check uploads directory writable
+    try:
+        test_file = UPLOADS_DIR / ".health_check"
+        test_file.touch()
+        test_file.unlink()
+        checks["storage"] = "writable"
+    except Exception as e:
+        checks["storage"] = f"error: {str(e)}"
+        overall_healthy = False
+        logger.error(f"Health check - storage failed: {e}")
+    
+    # Check Gemini API key configured
+    checks["gemini_key"] = "configured" if settings.google_api_key else "missing"
+    if not settings.google_api_key:
+        overall_healthy = False
+    
+    status_code = 200 if overall_healthy else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if overall_healthy else "unhealthy",
+            "service": "biome-coaching-api",
+            "checks": checks
+        }
+    )
 
 
 @app.post("/api/analyze")
@@ -142,11 +173,48 @@ async def analyze_video_endpoint(
             f"user_id: {user_id}, filename: {video.filename}"
         )
         
+        # Validation: File type
+        if not video.content_type or not video.content_type.startswith('video/'):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "File must be a video (mp4, mov, avi, webm)", "step": "validation"}
+            )
+        
+        # Validation: Read file size
+        video.file.seek(0, 2)  # Seek to end
+        file_size_bytes = video.file.tell()
+        video.file.seek(0)  # Reset to beginning
+        
+        # Validation: Empty file
+        if file_size_bytes == 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "File is empty", "step": "validation"}
+            )
+        
+        # Validation: File too small (likely corrupted)
+        if file_size_bytes < 1024:  # 1KB minimum
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "File too small (minimum 1KB)", "step": "validation"}
+            )
+        
+        # Validation: File too large
+        max_size = 100 * 1024 * 1024  # 100MB
+        if file_size_bytes > max_size:
+            size_mb = file_size_bytes / (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail={"error": f"File too large: {size_mb:.1f}MB (max 100MB)", "step": "validation"}
+            )
+        
         # Generate session ID
         session_id = str(uuid.uuid4())
         
         # Save uploaded file temporarily
-        temp_path = UPLOADS_DIR / f"temp_{session_id}_{video.filename}"
+        # SECURITY: Use only session_id, ignore user-provided filename to prevent path traversal
+        safe_ext = Path(video.filename).suffix.lower() if video.filename else ".tmp"
+        temp_path = UPLOADS_DIR / f"temp_{session_id}{safe_ext}"
         logger.debug(f"Saving uploaded file to temporary location: {temp_path}")
         
         with temp_path.open("wb") as buffer:
@@ -155,31 +223,35 @@ async def analyze_video_endpoint(
         file_size = temp_path.stat().st_size
         logger.info(f"File saved: {file_size} bytes")
         
-        # Step 1: Upload video (copies to permanent location with session_id)
-        logger.info(f"Step 1/4: Uploading video for session {session_id}")
-        upload_result = upload_video(
-            video_file_path=str(temp_path),
-            exercise_name=exercise_name,
-            user_id=user_id,
-        )
-        
-        # Clean up temp file
-        if temp_path and temp_path.exists():
-            temp_path.unlink()
-            logger.debug("Temporary file cleaned up")
-        
-        if upload_result.get("status") != "success":
-            error_msg = upload_result.get("message", "Upload failed")
-            error_type = upload_result.get("error_type", "unknown")
-            logger.error(f"Upload failed: {error_msg} (type: {error_type})")
-            raise HTTPException(
-                status_code=400 if error_type == "validation" else 500,
-                detail={
-                    "error": error_msg,
-                    "error_type": error_type,
-                    "step": "upload"
-                }
+        try:
+            # Step 1: Upload video (copies to permanent location with session_id)
+            logger.info(f"Step 1/4: Uploading video for session {session_id}")
+            upload_result = upload_video(
+                video_file_path=str(temp_path),
+                exercise_name=exercise_name,
+                user_id=user_id,
             )
+            
+            if upload_result.get("status") != "success":
+                error_msg = upload_result.get("message", "Upload failed")
+                error_type = upload_result.get("error_type", "unknown")
+                logger.error(f"Upload failed: {error_msg} (type: {error_type})")
+                raise HTTPException(
+                    status_code=400 if error_type == "validation" else 500,
+                    detail={
+                        "error": error_msg,
+                        "error_type": error_type,
+                        "step": "upload"
+                    }
+                )
+        finally:
+            # Always cleanup temp file
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                    logger.debug("Temporary file cleaned up")
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_err}")
         
         session_id = upload_result["session_id"]
         logger.info(f"Video uploaded successfully, session_id: {session_id}")
@@ -270,13 +342,6 @@ async def analyze_video_endpoint(
         raise
     except Exception as e:
         logger.critical(f"Unexpected error in analyze endpoint: {e}", exc_info=True)
-        # Clean up temp file on error
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
-        
         raise HTTPException(
             status_code=500,
             detail={
@@ -292,12 +357,21 @@ async def get_results(session_id: str):
     Get analysis results for a session.
     
     Args:
-        session_id: The analysis session ID
+        session_id: The analysis session ID (UUID format)
     
     Returns:
         Complete analysis results if available
     """
     try:
+        # Validate UUID format
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session_id format (must be UUID)"
+            )
+        
         logger.info(f"Fetching results for session {session_id}")
         
         with get_db_connection() as conn:
@@ -329,12 +403,21 @@ async def get_session(session_id: str):
     Get session information including status.
     
     Args:
-        session_id: The analysis session ID
+        session_id: The analysis session ID (UUID format)
     
     Returns:
         Session details including status
     """
     try:
+        # Validate UUID format
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session_id format (must be UUID)"
+            )
+        
         logger.debug(f"Fetching session info for {session_id}")
         
         with get_db_connection() as conn:
@@ -343,14 +426,15 @@ async def get_session(session_id: str):
         if not session_row:
             raise HTTPException(status_code=404, detail="Session not found")
         
-        # Parse the row (structure: id, user_id, exercise_id, exercise_name, video_url, ...)
+        # Parse the row with explicit indices (matches SELECT order in queries.py)
+        # Order: id, user_id, exercise_id, exercise_name, video_url, video_duration, status, created_at, started_at, completed_at, error_message
         return JSONResponse({
-            "session_id": str(session_row[0]),
-            "user_id": str(session_row[1]) if session_row[1] else None,
-            "exercise_name": session_row[3],
-            "video_url": session_row[4],
-            "status": session_row[6],
-            "created_at": session_row[7].isoformat() if session_row[7] else None,
+            "session_id": str(session_row[0]),  # id
+            "user_id": str(session_row[1]) if session_row[1] else None,  # user_id
+            "exercise_name": session_row[3],  # exercise_name
+            "video_url": session_row[4],  # video_url
+            "status": session_row[6],  # status
+            "created_at": session_row[7].isoformat() if session_row[7] else None,  # created_at
         })
         
     except HTTPException:

@@ -77,6 +77,17 @@ def upload_video(
     file_size_mb = file_size_bytes / (1024 * 1024)
     logger.debug(f"File size: {file_size_mb:.2f} MB")
     
+    # Check for empty files
+    if file_size_bytes == 0:
+      logger.error("File is empty (0 bytes)")
+      raise ValidationError("File is empty")
+    
+    # Check for suspiciously small files (likely corrupted)
+    if file_size_bytes < 1024:  # 1KB minimum
+      logger.error(f"File too small: {file_size_bytes} bytes (min: 1KB)")
+      raise ValidationError("File too small (minimum 1KB)")
+    
+    # Check maximum size
     if file_size_bytes > MAX_MB * 1024 * 1024:
       logger.error(f"File too large: {file_size_mb:.2f} MB (max: {MAX_MB} MB)")
       raise ValidationError(

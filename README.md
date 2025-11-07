@@ -530,6 +530,37 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
+## 🔬 Research & Experimental Features
+
+### Real-Time Webcam Tracking (`ai_gym/`)
+
+We've developed a proof-of-concept desktop application for real-time exercise tracking that demonstrates future capabilities:
+
+**Features:**
+- 🎥 Live webcam pose detection with MediaPipe
+- 🔢 Real-time rep counting (Push-ups, Squats, Planks, Lunges)
+- 🔊 Voice feedback for hands-free coaching
+- ✅ Form corrections during exercise
+- 🎬 Session video recording
+- 📊 Workout history logging
+
+**Try it locally:**
+```bash
+python ai_gym/main.py
+```
+Requires: Webcam, mediapipe, opencv-python, numpy, pyttsx3
+
+**Vision for Phase 2:**
+This POC validates the technical feasibility of:
+- Mobile app with live camera feed
+- On-device processing for privacy
+- Offline mode for gym use
+- Lower-latency feedback loop (<100ms)
+
+**Current Status**: Separate prototype validating real-time capabilities. The main web application (biome_coaching_agent/) focuses on detailed post-workout analysis with AI-generated coaching cues. Future releases will offer hybrid mode: upload for detailed analysis OR live webcam for instant feedback.
+
+---
+
 ## 🎉 Acknowledgments
 
 - **Google Cloud Team**: For Cloud Run platform and $100 credits

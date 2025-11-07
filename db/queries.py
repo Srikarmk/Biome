@@ -76,9 +76,14 @@ def get_analysis_session(
   conn: psycopg.Connection,
   session_id: str,
 ) -> Any:
-  """Get analysis session by ID."""
+  """Get analysis session by ID with explicit column selection."""
   cur = conn.cursor()
-  cur.execute("SELECT * FROM analysis_sessions WHERE id = %s", (session_id,))
+  cur.execute(
+    "SELECT id, user_id, exercise_id, exercise_name, video_url, video_duration, "
+    "status, created_at, started_at, completed_at, error_message "
+    "FROM analysis_sessions WHERE id = %s",
+    (session_id,)
+  )
   return cur.fetchone()
 
 

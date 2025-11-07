@@ -1,3 +1,5 @@
+# IMPORTANT: Use Python 3.11 (run with: py -3.11 api_server.py)
+# MediaPipe 0.10.9 not compatible with Python 3.12+
 google-adk>=1.0.0
 mediapipe==0.10.9
 opencv-python-headless>=4.8.0
