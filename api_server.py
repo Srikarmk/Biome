@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 import uvicorn
 
 # Import ADK agent and tools
+from biome_coaching_agent.config import settings
 from biome_coaching_agent.tools.upload_video import upload_video
 from biome_coaching_agent.tools.extract_pose_landmarks import extract_pose_landmarks
 from biome_coaching_agent.tools.analyze_workout_form import analyze_workout_form
@@ -32,6 +33,14 @@ from db import queries
 # Initialize logger
 logger = get_logger(__name__)
 
+# Validate configuration on startup
+try:
+    settings.validate()
+    logger.info("Configuration validated successfully")
+except ValueError as e:
+    logger.critical(f"Configuration validation failed: {e}")
+    raise
+
 app = FastAPI(
     title="Biome Coaching API",
     description="AI-powered fitness form coaching API",
@@ -43,8 +52,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # React dev server
+        "http://localhost:3001",  # React dev server (alternate port)
         "http://localhost:8000",  # Self
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
         "http://127.0.0.1:8000",
     ],
     allow_credentials=True,
@@ -53,7 +64,7 @@ app.add_middleware(
 )
 
 # Ensure uploads directory exists
-UPLOADS_DIR = Path("uploads")
+UPLOADS_DIR = Path(settings.uploads_dir)
 UPLOADS_DIR.mkdir(exist_ok=True)
 logger.info(f"Uploads directory: {UPLOADS_DIR.absolute()}")
 
@@ -350,20 +361,16 @@ async def get_session(session_id: str):
 
 
 if __name__ == "__main__":
-    # Configure server
-    # Cloud Run uses PORT env var (defaults to 8080)
-    # For local dev, can override with PORT=8000
-    port = int(os.getenv("PORT", "8080"))
-    host = os.getenv("HOST", "0.0.0.0")
-    reload = os.getenv("RELOAD", "true").lower() == "true"
-    
-    logger.info(f"Starting Biome Coaching API server on {host}:{port}")
+    # Configure server using centralized settings
+    logger.info(f"Starting Biome Coaching API server on {settings.host}:{settings.port}")
+    logger.info(f"Debug mode: {settings.debug}")
+    logger.info(f"Database: {settings.database_url.split('@')[-1] if '@' in settings.database_url else 'configured'}")
     
     uvicorn.run(
         "api_server:app",
-        host=host,
-        port=port,
-        reload=reload,
-        log_level="info"
+        host=settings.host,
+        port=settings.port,
+        reload=settings.reload,
+        log_level=settings.log_level
     )
 

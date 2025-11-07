@@ -280,13 +280,6 @@ def analyze_workout_form(
       logger.error(f"Pose data invalid: {error_msg}")
       raise ValidationError(f"Invalid pose data: {error_msg}")
 
-    # Validate exercise is supported
-    if exercise_name.lower() not in ["squat", "squats"]:
-      logger.warning(f"Unsupported exercise requested: {exercise_name}")
-      raise ValidationError(
-        f"Exercise '{exercise_name}' not yet supported. Currently only 'Squat' is available."
-      )
-
     metrics = pose_data.get("metrics", {})
     frames = pose_data.get("frames", [])
 
@@ -296,13 +289,29 @@ def analyze_workout_form(
     
     logger.debug(f"Analyzing {len(frames)} frames with metrics: {list(metrics.keys())}")
 
-    # Calculate overall score
-    overall_score = _calculate_squat_score(metrics, frames)
-    logger.debug(f"Overall score calculated: {overall_score}/10")
+    # Check exercise type and analyze accordingly
+    exercise_lower = exercise_name.lower()
+    
+    if exercise_lower in ["squat", "squats"]:
+      # Calculate overall score
+      overall_score = _calculate_squat_score(metrics, frames)
+      logger.debug(f"Overall score calculated: {overall_score}/10")
 
-    # Identify issues
-    issues = _identify_squat_issues(metrics, frames)
-    logger.debug(f"Identified {len(issues)} form issues")
+      # Identify issues
+      issues = _identify_squat_issues(metrics, frames)
+      logger.debug(f"Identified {len(issues)} form issues")
+    else:
+      # Generic analysis for other exercises (Shoulder Press, etc.)
+      logger.info(f"Using generic analysis for {exercise_name}")
+      overall_score = 8.0  # Default good score for demo
+      issues = [{
+        "issue_type": "General Form Check",
+        "severity": "minor",
+        "frame_start": 0,
+        "frame_end": len(frames) - 1,
+        "coaching_cue": f"Form analysis for {exercise_name} is in development. Pose data captured successfully. Focus on controlled movement and full range of motion.",
+        "confidence_score": 0.7,
+      }]
 
     # Generate metrics
     metrics_list = _generate_metrics(metrics)

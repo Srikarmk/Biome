@@ -53,54 +53,11 @@ function AgentCard({ name, icon, status, tasks }: AgentCardProps) {
   );
 }
 
-// Mock results for demonstration
-const MOCK_RESULTS = {
-  overallScore: 7.2,
-  issues: [
-    {
-      type: "Knee Valgus",
-      severity: "moderate",
-      frameStart: 23,
-      frameEnd: 45,
-      cue: "Your right knee is collapsing inward 12°. Push both knees out to track over your toes.",
-    },
-    {
-      type: "Insufficient Depth",
-      severity: "minor",
-      frameStart: 34,
-      frameEnd: 56,
-      cue: "You're stopping 5° above parallel. Sit back like reaching for a chair to achieve proper depth.",
-    },
-    {
-      type: "Back Rounding",
-      severity: "moderate",
-      frameStart: 78,
-      frameEnd: 92,
-      cue: "Your spine is flexing 15° at the bottom. Keep your chest up and maintain your natural curve.",
-    },
-  ],
-  strengths: [
-    "Consistent tempo (good control)",
-    "Balanced left/right symmetry",
-    "Strong bracing throughout",
-  ],
-  metrics: {
-    "Knee Angle (bottom)": { actual: "87°", target: "90°", status: "warning" },
-    "Hip Angle (bottom)": { actual: "92°", target: "85-95°", status: "good" },
-    "Back Angle": { actual: "18°", target: "<15°", status: "warning" },
-    "Depth Achieved": { actual: "95%", target: "100%", status: "warning" },
-    "Symmetry Score": { actual: "9.2/10", target: ">8/10", status: "good" },
-  },
-  recommendations: [
-    "Strengthening glutes (knee stability)",
-    "Ankle mobility drills",
-    "Core bracing practice",
-  ],
-};
+// Real analysis - mock data removed since backend is working
 
 // API URL - defaults to local backend at port 8000
 // For Cloud Run deployment, set REACT_APP_API_URL to your backend URL
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 
 export default function Analyzing() {
   const location = useLocation();
@@ -195,41 +152,7 @@ export default function Analyzing() {
     }
   }, [navigate, exercise, video, videoUrl]);
 
-  const simulateAnalysis = useCallback(async () => {
-    // Step 1: Upload
-    setCurrentStep("uploading");
-    await delay(1000);
-    setProgress(10);
-
-    // Step 2: Vision processing
-    setCurrentStep("vision");
-    setAgentStatus({ vision: "processing", coaching: "waiting" });
-
-    for (let i = 10; i <= 60; i += 5) {
-      await delay(500);
-      setProgress(i);
-    }
-
-    setAgentStatus({ vision: "complete", coaching: "processing" });
-
-    // Step 3: Coaching
-    setCurrentStep("coaching");
-    for (let i = 60; i <= 100; i += 10) {
-      await delay(800);
-      setProgress(i);
-    }
-
-    setAgentStatus({ vision: "complete", coaching: "complete" });
-
-    // Navigate to results
-    await delay(500);
-    navigate("/results", {
-      state: {
-        exercise,
-        results: MOCK_RESULTS,
-      },
-    });
-  }, [navigate, exercise]);
+  // Simulation removed - using real API analysis only
 
   useEffect(() => {
     // Use real analysis instead of simulation

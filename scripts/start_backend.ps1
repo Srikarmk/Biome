@@ -40,14 +40,16 @@ Write-Host "  Database: $env:DATABASE_URL" -ForegroundColor Gray
 Write-Host ""
 
 # Start the backend server
-# Set PORT for local development (Cloud Run uses 8080, but locally 8000 is easier)
+# Set PORT for local development (consistent with config.py default)
 if (-not $env:PORT) {
-    $env:PORT = 8000
-    Write-Host "🔧 Starting FastAPI server on http://localhost:8000..." -ForegroundColor Green
+    $env:PORT = 8080
+    Write-Host "🔧 Starting FastAPI server on http://localhost:8080..." -ForegroundColor Green
 } else {
     Write-Host "🔧 Starting FastAPI server on http://localhost:$env:PORT..." -ForegroundColor Green
 }
 Write-Host "Press Ctrl+C to stop" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "💡 Frontend should connect to: http://localhost:8080" -ForegroundColor Cyan
 Write-Host ""
 
 python api_server.py

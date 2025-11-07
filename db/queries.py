@@ -43,6 +43,17 @@ def create_analysis_session(
   )
   
   try:
+    # Convert user_id to None if it's not a valid UUID (for demo mode)
+    parsed_user_id = None
+    if user_id:
+      try:
+        import uuid
+        uuid.UUID(user_id)  # Validate it's a UUID
+        parsed_user_id = user_id
+      except (ValueError, AttributeError):
+        # Not a valid UUID, use None for demo users
+        parsed_user_id = None
+    
     cur = conn.cursor()
     cur.execute(
       (
@@ -50,7 +61,7 @@ def create_analysis_session(
         "(id, user_id, exercise_name, video_url, video_duration, file_size, status, created_at) "
         "VALUES (%s, %s, %s, %s, %s, %s, 'pending', NOW()) RETURNING id"
       ),
-      (session_id, user_id, exercise_name, video_url, duration, file_size),
+      (session_id, parsed_user_id, exercise_name, video_url, duration, file_size),
     )
     row = cur.fetchone()
     created_id = row[0]
