@@ -46,12 +46,16 @@ def save_analysis_results(
     dict: {status: "success" | "error", result_id: str, message: str} or {status, error_type, message} on error
   """
   logger.info(f"Saving analysis results for session: {session_id}")
+  logger.debug(f"Received analysis_data keys: {list(analysis_data.keys())}")
+  logger.debug(f"Analysis data status field: {analysis_data.get('status', 'MISSING')}")
   
   try:
-    # Validate analysis data
-    if analysis_data.get("status") != "success":
-      error_msg = analysis_data.get("message", "Analysis data indicates failure")
+    # Validate analysis data - check if status exists and is success
+    status = analysis_data.get("status")
+    if status != "success":
+      error_msg = analysis_data.get("message", f"Analysis data indicates failure (status={status})")
       logger.error(f"Invalid analysis data for session {session_id}: {error_msg}")
+      logger.error(f"Full analysis_data received: {analysis_data}")
       raise ValidationError(error_msg)
 
     overall_score = analysis_data.get("overall_score", 0.0)

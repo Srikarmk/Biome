@@ -2,8 +2,13 @@
 Form analysis tool for Biome Coaching Agent.
 
 Analyzes pose data and generates coaching feedback with specific cues,
-severity scores, and actionable recommendations. Focuses on squat analysis
-for hackathon MVP.
+severity scores, and actionable recommendations.
+
+Features:
+- Squat-specific analysis with precision biomechanics evaluation
+- Generic smart analysis for all other exercises (Shoulder Press, Deadlift, etc.)
+- Universal checks: symmetry, range of motion, core stability
+- Production-ready error handling and logging
 """
 from typing import Any, Dict, List
 
@@ -128,6 +133,342 @@ def _identify_squat_issues(
     })
 
   return issues
+
+
+# ============================================
+# GENERIC ANALYSIS (Works for ANY exercise)
+# ============================================
+
+def _calculate_generic_score(metrics: Dict[str, Any], exercise_name: str) -> float:
+  """
+  Calculate overall form score (0-10) for any exercise based on universal biomechanics.
+  
+  Evaluates:
+  - Movement symmetry (left vs right)
+  - Range of motion consistency
+  - Core stability (minimal compensatory movement)
+  - Joint angle health (avoiding extreme positions)
+  """
+  score = 10.0
+  penalties: List[float] = []
+  
+  # 1. Check bilateral symmetry (applies to all exercises)
+  left_knee = metrics.get("left_knee_avg", 180)
+  right_knee = metrics.get("right_knee_avg", 180)
+  knee_asymmetry = abs(left_knee - right_knee)
+  
+  if knee_asymmetry > 15:
+    # Significant asymmetry = injury risk
+    penalty = min((knee_asymmetry - 15) / 10 * 2.0, 2.5)
+    penalties.append(penalty)
+  
+  left_hip = metrics.get("left_hip_avg", 180)
+  right_hip = metrics.get("right_hip_avg", 180)
+  hip_asymmetry = abs(left_hip - right_hip)
+  
+  if hip_asymmetry > 10:
+    penalty = min((hip_asymmetry - 10) / 10 * 1.5, 2.0)
+    penalties.append(penalty)
+  
+  # 2. Check range of motion (good movement uses full range)
+  knee_range = abs(metrics.get("left_knee_max", 180) - metrics.get("left_knee_min", 0))
+  
+  if knee_range < 20:
+    # Very limited ROM = poor movement quality
+    penalties.append(1.5)
+  elif knee_range < 40:
+    # Moderate ROM = room for improvement
+    penalties.append(0.5)
+  
+  # 3. Check core stability (hips shouldn't move excessively in upper body exercises)
+  hip_max = max(metrics.get("left_hip_max", 180), metrics.get("right_hip_max", 180))
+  hip_min = min(metrics.get("left_hip_min", 0), metrics.get("right_hip_min", 0))
+  hip_variance = hip_max - hip_min
+  
+  # For exercises where hips should be stable (overhead press, etc.)
+  if hip_variance > 25:
+    penalty = min((hip_variance - 25) / 20, 1.5)
+    penalties.append(penalty)
+  
+  # Apply penalties
+  total_penalty = sum(penalties)
+  final_score = max(0.0, score - total_penalty)
+  
+  logger.debug(
+    f"Generic score calculation for {exercise_name}: "
+    f"base=10.0, penalties={penalties}, final={final_score:.1f}"
+  )
+  
+  return round(final_score, 1)
+
+
+def _identify_generic_issues(
+  metrics: Dict[str, Any],
+  exercise_name: str,
+  total_frames: int,
+) -> List[Dict[str, Any]]:
+  """
+  Identify common form issues that apply to most exercises.
+  
+  Detects:
+  - Asymmetric movement patterns (injury risk)
+  - Limited range of motion (reduced effectiveness)
+  - Core instability (compensatory movement)
+  """
+  issues: List[Dict[str, Any]] = []
+  
+  # Issue 1: Movement asymmetry (left vs right imbalance)
+  left_knee = metrics.get("left_knee_avg", 180)
+  right_knee = metrics.get("right_knee_avg", 180)
+  knee_asymmetry = abs(left_knee - right_knee)
+  
+  left_hip = metrics.get("left_hip_avg", 180)
+  right_hip = metrics.get("right_hip_avg", 180)
+  hip_asymmetry = abs(left_hip - right_hip)
+  
+  max_asymmetry = max(knee_asymmetry, hip_asymmetry)
+  
+  if max_asymmetry > 15:
+    severity = "severe" if max_asymmetry > 25 else "moderate"
+    frame_start = int(total_frames * 0.2)
+    frame_end = int(total_frames * 0.8)
+    
+    issues.append({
+      "issue_type": "Asymmetric Movement Pattern",
+      "severity": severity,
+      "frame_start": frame_start,
+      "frame_end": frame_end,
+      "coaching_cue": (
+        f"Your left and right sides show {max_asymmetry:.0f}° difference in movement. "
+        f"This asymmetry can lead to muscle imbalances and injury over time. "
+        f"Focus on moving both sides equally. Consider reducing weight to perfect symmetry, "
+        f"and strengthen your weaker side with unilateral exercises."
+      ),
+      "confidence_score": 0.80,
+    })
+  
+  # Issue 2: Limited range of motion
+  knee_range = abs(metrics.get("left_knee_max", 180) - metrics.get("left_knee_min", 0))
+  
+  if knee_range < 40:
+    severity = "moderate" if knee_range < 20 else "minor"
+    frame_start = 0
+    frame_end = total_frames - 1
+    
+    issues.append({
+      "issue_type": "Limited Range of Motion",
+      "severity": severity,
+      "frame_start": frame_start,
+      "frame_end": frame_end,
+      "coaching_cue": (
+        f"Increase your range of motion for {exercise_name}. Full-range movements "
+        f"activate more muscle fibers and improve flexibility. Your current range is "
+        f"{knee_range:.0f}°. Focus on controlled movement through the complete range. "
+        f"If mobility is limiting you, work on flexibility before adding weight."
+      ),
+      "confidence_score": 0.75,
+    })
+  
+  # Issue 3: Core instability (excessive hip movement during upper body exercises)
+  hip_max = max(metrics.get("left_hip_max", 180), metrics.get("right_hip_max", 180))
+  hip_min = min(metrics.get("left_hip_min", 0), metrics.get("right_hip_min", 0))
+  hip_variance = hip_max - hip_min
+  
+  # High variance in hip angle suggests core instability or compensatory movement
+  if hip_variance > 25:
+    severity = "moderate" if hip_variance > 35 else "minor"
+    frame_start = int(total_frames * 0.25)
+    frame_end = int(total_frames * 0.75)
+    
+    issues.append({
+      "issue_type": "Core Stability Issue",
+      "severity": severity,
+      "frame_start": frame_start,
+      "frame_end": frame_end,
+      "coaching_cue": (
+        f"Keep your core braced and hips stable throughout {exercise_name}. "
+        f"Your hip angle varies by {hip_variance:.0f}° during the movement. "
+        f"Engage your core muscles before each rep, maintain a neutral spine, "
+        f"and avoid using momentum or body English to move the weight."
+      ),
+      "confidence_score": 0.70,
+    })
+  
+  logger.debug(f"Generic analysis identified {len(issues)} issues for {exercise_name}")
+  
+  return issues
+
+
+def _generate_generic_metrics(metrics: Dict[str, Any], exercise_name: str) -> List[Dict[str, Any]]:
+  """Generate exercise-agnostic metric comparisons."""
+  metric_list: List[Dict[str, Any]] = []
+  
+  # Metric 1: Movement symmetry (universal)
+  left_knee = metrics.get("left_knee_avg", 180)
+  right_knee = metrics.get("right_knee_avg", 180)
+  knee_asymmetry = abs(left_knee - right_knee)
+  
+  left_hip = metrics.get("left_hip_avg", 180)
+  right_hip = metrics.get("right_hip_avg", 180)
+  hip_asymmetry = abs(left_hip - right_hip)
+  
+  max_asymmetry = max(knee_asymmetry, hip_asymmetry)
+  
+  metric_list.append({
+    "metric_name": "Movement Symmetry",
+    "actual_value": f"{max_asymmetry:.0f}° difference",
+    "target_value": "< 10°",
+    "status": "good" if max_asymmetry < 10 else ("warning" if max_asymmetry < 20 else "error"),
+  })
+  
+  # Metric 2: Range of motion (universal)
+  knee_range = abs(metrics.get("left_knee_max", 180) - metrics.get("left_knee_min", 0))
+  
+  metric_list.append({
+    "metric_name": "Range of Motion",
+    "actual_value": f"{knee_range:.0f}°",
+    "target_value": "> 40°",
+    "status": "good" if knee_range > 50 else ("warning" if knee_range > 30 else "error"),
+  })
+  
+  # Metric 3: Core stability (universal)
+  hip_max = max(metrics.get("left_hip_max", 180), metrics.get("right_hip_max", 180))
+  hip_min = min(metrics.get("left_hip_min", 0), metrics.get("right_hip_min", 0))
+  hip_variance = hip_max - hip_min
+  
+  metric_list.append({
+    "metric_name": "Core Stability",
+    "actual_value": f"{hip_variance:.0f}° variance",
+    "target_value": "< 20°",
+    "status": "good" if hip_variance < 20 else ("warning" if hip_variance < 30 else "error"),
+  })
+  
+  return metric_list
+
+
+def _generate_generic_strengths(
+  metrics: Dict[str, Any],
+  issues: List[Dict[str, Any]],
+  exercise_name: str,
+) -> List[str]:
+  """Generate positive feedback for any exercise based on metrics."""
+  strengths: List[str] = []
+  
+  # Strength 1: Good symmetry
+  left_knee = metrics.get("left_knee_avg", 180)
+  right_knee = metrics.get("right_knee_avg", 180)
+  knee_asymmetry = abs(left_knee - right_knee)
+  
+  left_hip = metrics.get("left_hip_avg", 180)
+  right_hip = metrics.get("right_hip_avg", 180)
+  hip_asymmetry = abs(left_hip - right_hip)
+  
+  if knee_asymmetry < 10 and hip_asymmetry < 8:
+    strengths.append(f"Excellent bilateral symmetry! Both sides of your body are moving evenly during {exercise_name}.")
+  
+  # Strength 2: Good range of motion
+  knee_range = abs(metrics.get("left_knee_max", 180) - metrics.get("left_knee_min", 0))
+  if knee_range > 60:
+    strengths.append(f"Great range of motion! You're using the full movement range for {exercise_name}.")
+  
+  # Strength 3: Stable core
+  hip_variance = abs(metrics.get("left_hip_max", 180) - metrics.get("left_hip_min", 0))
+  if hip_variance < 15:
+    strengths.append("Solid core stability! Your hips remain stable throughout the movement.")
+  
+  # Strength 4: No severe issues
+  severe_issues = [i for i in issues if i.get("severity") == "severe"]
+  if not severe_issues and issues:
+    strengths.append("No severe form issues detected. You're on the right track!")
+  
+  # Strength 5: Perfect form
+  if not issues:
+    strengths.append(f"Outstanding {exercise_name} form! Keep up the excellent technique.")
+  
+  # Ensure at least one positive message
+  if not strengths:
+    strengths.append(f"Good effort on your {exercise_name}! Focus on the cues below to refine your technique.")
+  
+  return strengths
+
+
+def _generate_generic_recommendations(
+  issues: List[Dict[str, Any]],
+  overall_score: float,
+  exercise_name: str,
+) -> List[Dict[str, Any]]:
+  """Generate improvement recommendations for any exercise."""
+  recommendations: List[Dict[str, Any]] = []
+  
+  # Low score = need fundamentals
+  if overall_score < 6.0:
+    recommendations.append({
+      "recommendation_text": (
+        f"Focus on mastering the basics of {exercise_name} with reduced weight or bodyweight. "
+        f"Use video feedback or a mirror to monitor your form. Consider working with a trainer "
+        f"for personalized guidance on this movement pattern."
+      ),
+      "priority": 1,
+    })
+  
+  # Asymmetry issue = unilateral work needed
+  has_asymmetry = any("Asymmetry" in issue.get("issue_type", "") or "Asymmetric" in issue.get("issue_type", "") for issue in issues)
+  if has_asymmetry:
+    recommendations.append({
+      "recommendation_text": (
+        f"Address the left-right imbalance with unilateral exercises (single-arm/leg variations). "
+        f"This builds balanced strength and reduces injury risk. Include mobility work for "
+        f"your weaker side."
+      ),
+      "priority": 2,
+    })
+  
+  # ROM issue = mobility work needed
+  has_rom_issue = any("Range of Motion" in issue.get("issue_type", "") for issue in issues)
+  if has_rom_issue:
+    recommendations.append({
+      "recommendation_text": (
+        f"Improve your mobility with dynamic stretching and foam rolling before {exercise_name}. "
+        f"Full range of motion is crucial for muscle activation and joint health. "
+        f"Practice the movement slowly without weight to build better patterns."
+      ),
+      "priority": 2,
+    })
+  
+  # Stability issue = core work needed
+  has_stability_issue = any("Stability" in issue.get("issue_type", "") for issue in issues)
+  if has_stability_issue:
+    recommendations.append({
+      "recommendation_text": (
+        f"Strengthen your core with planks, dead bugs, and anti-rotation exercises. "
+        f"A stable core prevents compensatory movements and transfers more power to the target muscles. "
+        f"Brace your core before each rep of {exercise_name}."
+      ),
+      "priority": 2,
+    })
+  
+  # Good score = progressive overload
+  if overall_score >= 8.0:
+    recommendations.append({
+      "recommendation_text": (
+        f"Your {exercise_name} form is solid! Consider progressive overload: gradually increase "
+        f"weight, reps, or time under tension. You can also try advanced variations to continue "
+        f"building strength and skill."
+      ),
+      "priority": 3,
+    })
+  
+  # Ensure at least one recommendation
+  if not recommendations:
+    recommendations.append({
+      "recommendation_text": (
+        f"Keep practicing {exercise_name} with consistent form. Record yourself regularly "
+        f"to track improvements and catch issues early."
+      ),
+      "priority": 3,
+    })
+  
+  return recommendations
 
 
 def _generate_metrics(metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -282,36 +623,37 @@ def analyze_workout_form(
     exercise_lower = exercise_name.lower()
     
     if exercise_lower in ["squat", "squats"]:
-      # Calculate overall score
+      # Squat-specific analysis (high precision for this exercise)
+      logger.info(f"Using squat-specific analysis for {exercise_name}")
       overall_score = _calculate_squat_score(metrics)
-      logger.debug(f"Overall score calculated: {overall_score}/10")
+      logger.debug(f"Squat score calculated: {overall_score}/10")
 
-      # Identify issues
       issues = _identify_squat_issues(metrics, total_frames)
-      logger.debug(f"Identified {len(issues)} form issues")
+      logger.debug(f"Squat-specific issues identified: {len(issues)}")
+      
+      # Use squat-specific metrics
+      metrics_list = _generate_metrics(metrics)
+      strengths = _generate_strengths(metrics, issues)
+      recommendations = _generate_recommendations(issues, overall_score)
+      
     else:
-      # Generic analysis for other exercises (Shoulder Press, etc.)
-      logger.info(f"Using generic analysis for {exercise_name}")
-      overall_score = 8.0  # Default good score for demo
-      issues = [{
-        "issue_type": "General Form Check",
-        "severity": "minor",
-        "frame_start": 0,
-        "frame_end": total_frames - 1,
-        "coaching_cue": f"Form analysis for {exercise_name} is in development. Pose data captured successfully. Focus on controlled movement and full range of motion.",
-        "confidence_score": 0.7,
-      }]
+      # Generic analysis for all other exercises (Shoulder Press, Deadlift, Push-up, etc.)
+      logger.info(f"Using generic smart analysis for {exercise_name}")
+      overall_score = _calculate_generic_score(metrics, exercise_name)
+      logger.debug(f"Generic score calculated: {overall_score}/10")
 
-    # Generate metrics
-    metrics_list = _generate_metrics(metrics)
-
-    # Generate strengths
-    strengths = _generate_strengths(metrics, issues)
-    logger.debug(f"Generated {len(strengths)} strengths")
-
-    # Generate recommendations
-    recommendations = _generate_recommendations(issues, overall_score)
-    logger.debug(f"Generated {len(recommendations)} recommendations")
+      issues = _identify_generic_issues(metrics, exercise_name, total_frames)
+      logger.debug(f"Generic issues identified: {len(issues)}")
+      
+      # Use generic metrics and feedback
+      metrics_list = _generate_generic_metrics(metrics, exercise_name)
+      strengths = _generate_generic_strengths(metrics, issues, exercise_name)
+      recommendations = _generate_generic_recommendations(issues, overall_score, exercise_name)
+    
+    logger.debug(
+      f"Analysis complete - score: {overall_score}/10, issues: {len(issues)}, "
+      f"metrics: {len(metrics_list)}, strengths: {len(strengths)}, recommendations: {len(recommendations)}"
+    )
 
     logger.info(
       f"Form analysis complete - exercise: {exercise_name}, "

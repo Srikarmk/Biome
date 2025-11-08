@@ -23,12 +23,12 @@ export default function Upload() {
   // Safely get selected exercise with validation
   const getSelectedExercise = (): string => {
     const stored = localStorage.getItem("selectedExercise");
-    const validExercises = ['Squat', 'Push-up', 'Deadlift', 'Plank', 'Lunge', 'Pull-up'];
-    
-    if (stored && validExercises.includes(stored)) {
+    // Accept ANY exercise name from selection page (don't validate against hardcoded list)
+    // This allows all exercises including Shoulder Press, Overhead Press, etc.
+    if (stored && stored.trim().length > 0) {
       return stored;
     }
-    // Default to Squat if invalid or missing
+    // Default to Squat if missing
     return "Squat";
   };
 
