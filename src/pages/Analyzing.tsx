@@ -57,7 +57,7 @@ function AgentCard({ name, icon, status, tasks }: AgentCardProps) {
 
 // API URL - defaults to local backend at port 8000
 // For Cloud Run deployment, set REACT_APP_API_URL to your backend URL
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 export default function Analyzing() {
   const location = useLocation();

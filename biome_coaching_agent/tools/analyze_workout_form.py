@@ -15,7 +15,7 @@ from biome_coaching_agent.exceptions import AnalysisError, ValidationError  # ty
 logger = get_logger(__name__)
 
 
-def _calculate_squat_score(metrics: Dict[str, Any], frames: List[Dict[str, Any]]) -> float:
+def _calculate_squat_score(metrics: Dict[str, Any]) -> float:
   """Calculate overall form score (0-10) for squat exercise."""
   score = 10.0  # Start with perfect score
   penalties: List[float] = []
@@ -56,7 +56,7 @@ def _calculate_squat_score(metrics: Dict[str, Any], frames: List[Dict[str, Any]]
 
 def _identify_squat_issues(
   metrics: Dict[str, Any],
-  frames: List[Dict[str, Any]],
+  total_frames: int,
 ) -> List[Dict[str, Any]]:
   """Identify specific form issues with severity and frame ranges."""
   issues: List[Dict[str, Any]] = []
@@ -69,15 +69,9 @@ def _identify_squat_issues(
   # Issue 1: Insufficient depth
   if min_knee_angle > 100:
     severity = "severe" if min_knee_angle > 120 else "moderate"
-    frame_start = 0
-    frame_end = len(frames) - 1
-    # Find frames where knee angle is problematic
-    for i, frame_data in enumerate(frames):
-      angles = frame_data.get("angles", {})
-      knee_avg = (angles.get("left_knee", 180) + angles.get("right_knee", 180)) / 2
-      if knee_avg > 100:
-        frame_start = min(frame_start, frame_data.get("frame", i))
-        frame_end = max(frame_end, frame_data.get("frame", i))
+    # Estimate frame range (hackathon simplification - assume issue occurs throughout descent)
+    frame_start = int(total_frames * 0.2)  # Typically starts after initial descent
+    frame_end = int(total_frames * 0.8)  # Ends before final ascent
 
     issues.append({
       "issue_type": "Insufficient Squat Depth",
@@ -98,14 +92,9 @@ def _identify_squat_issues(
   asymmetry = abs(avg_left_knee - avg_right_knee)
   if asymmetry > 15:
     severity = "severe" if asymmetry > 25 else "moderate"
-    # Find asymmetric frames
-    problematic_frames = [
-      f.get("frame", 0)
-      for f in frames
-      if abs(f.get("angles", {}).get("left_knee", 180) - f.get("angles", {}).get("right_knee", 180)) > 15
-    ]
-    frame_start = min(problematic_frames) if problematic_frames else 0
-    frame_end = max(problematic_frames) if problematic_frames else len(frames) - 1
+    # Estimate frame range (hackathon simplification)
+    frame_start = int(total_frames * 0.25)
+    frame_end = int(total_frames * 0.75)
 
     issues.append({
       "issue_type": "Knee Asymmetry/Valgus",
@@ -123,8 +112,8 @@ def _identify_squat_issues(
   avg_hip = (metrics.get("left_hip_avg", 180) + metrics.get("right_hip_avg", 180)) / 2
   if avg_hip < 145:
     severity = "severe" if avg_hip < 135 else "moderate"
-    frame_start = 0
-    frame_end = len(frames) - 1
+    frame_start = int(total_frames * 0.1)
+    frame_end = int(total_frames * 0.9)
 
     issues.append({
       "issue_type": "Excessive Forward Lean",
@@ -281,24 +270,24 @@ def analyze_workout_form(
       raise ValidationError(f"Invalid pose data: {error_msg}")
 
     metrics = pose_data.get("metrics", {})
-    frames = pose_data.get("frames", [])
+    total_frames = pose_data.get("total_frames", 0)
 
-    if not frames:
-      logger.error("No frame data available for analysis")
-      raise ValidationError("No frame data available for analysis")
+    if not metrics:
+      logger.error("No metrics available for analysis")
+      raise ValidationError("No metrics available for analysis")
     
-    logger.debug(f"Analyzing {len(frames)} frames with metrics: {list(metrics.keys())}")
+    logger.debug(f"Analyzing {total_frames} frames with metrics: {list(metrics.keys())}")
 
     # Check exercise type and analyze accordingly
     exercise_lower = exercise_name.lower()
     
     if exercise_lower in ["squat", "squats"]:
       # Calculate overall score
-      overall_score = _calculate_squat_score(metrics, frames)
+      overall_score = _calculate_squat_score(metrics)
       logger.debug(f"Overall score calculated: {overall_score}/10")
 
       # Identify issues
-      issues = _identify_squat_issues(metrics, frames)
+      issues = _identify_squat_issues(metrics, total_frames)
       logger.debug(f"Identified {len(issues)} form issues")
     else:
       # Generic analysis for other exercises (Shoulder Press, etc.)
@@ -308,7 +297,7 @@ def analyze_workout_form(
         "issue_type": "General Form Check",
         "severity": "minor",
         "frame_start": 0,
-        "frame_end": len(frames) - 1,
+        "frame_end": total_frames - 1,
         "coaching_cue": f"Form analysis for {exercise_name} is in development. Pose data captured successfully. Focus on controlled movement and full range of motion.",
         "confidence_score": 0.7,
       }]
@@ -333,7 +322,7 @@ def analyze_workout_form(
     return {
       "status": "success",
       "overall_score": overall_score,
-      "total_frames": pose_data.get("total_frames", len(frames)),
+      "total_frames": total_frames,
       "issues": issues,
       "metrics": metrics_list,
       "strengths": strengths,

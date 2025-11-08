@@ -287,6 +287,9 @@ async def analyze_video_endpoint(
         
         # Extract session_id from agent response or look for most recent session
         # The upload_video tool creates a session, we need to find it
+        # Convert "demo_user" to None since user_id column is UUID type
+        db_user_id = None if user_id == "demo_user" else user_id
+        
         with get_db_connection() as conn:
             # Get most recent session for this user/exercise (just created by agent)
             cur = conn.cursor()
@@ -297,7 +300,7 @@ async def analyze_video_endpoint(
                 AND (user_id = %s OR user_id IS NULL)
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (exercise_name, user_id)
+                (exercise_name, db_user_id)
             )
             session_row = cur.fetchone()
             if not session_row:

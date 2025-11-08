@@ -194,12 +194,14 @@ def extract_pose_landmarks(
       f"detected: {len(frames)}, skipped: {no_detection_count}"
     )
 
+    # For ADK: Return ONLY metrics (no frames) to keep context small
+    # The metrics contain all the aggregated data needed for analysis
     return {
       "status": "success",
       "detected_exercise": "Squat",  # hackathon simplification
       "total_frames": len(frames),
       "metrics": metrics,
-      "frames": frames,
+      "note": f"Extracted pose data from {len(frames)} frames with {processed_count} successful detections"
     }
 
   except SessionNotFoundError as snfe:
