@@ -56,6 +56,12 @@ class Settings:
   s3_bucket_name: Optional[str] = os.getenv("S3_BUCKET_NAME")
   aws_region: Optional[str] = os.getenv("AWS_REGION")
   
+  # CORS Configuration
+  cors_origins: str = os.getenv(
+    "CORS_ORIGINS", 
+    "http://localhost:3000,http://localhost:8001,http://localhost:8081"
+  )
+  
   def validate(self) -> None:
     """Validate required configuration values."""
     if not self.google_api_key:
@@ -79,5 +85,18 @@ class Settings:
 
 
 settings = Settings()
+
+
+# ============================================
+# CONSTANTS
+# ============================================
+
+# File validation constants
+ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.avi', '.webm'}
+MIN_VIDEO_SIZE_BYTES = 1024  # 1KB minimum
+MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024  # 100MB maximum
+
+# Demo user constant (NULL UUID for database)
+DEMO_USER_ID = None
 
 

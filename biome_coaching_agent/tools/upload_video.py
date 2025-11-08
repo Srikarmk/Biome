@@ -14,6 +14,11 @@ from google.adk.tools.tool_context import ToolContext
 from db.connection import get_db_connection  # type: ignore
 from db import queries  # type: ignore
 from biome_coaching_agent.logging_config import get_logger  # type: ignore
+from biome_coaching_agent.config import (  # type: ignore
+    ALLOWED_VIDEO_EXTENSIONS,
+    MIN_VIDEO_SIZE_BYTES,
+    MAX_VIDEO_SIZE_BYTES,
+)
 from biome_coaching_agent.exceptions import (  # type: ignore
     ValidationError,
     DatabaseError,
@@ -22,8 +27,9 @@ from biome_coaching_agent.exceptions import (  # type: ignore
 # Initialize logger
 logger = get_logger(__name__)
 
-ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm"}
-MAX_MB = 100
+# Use centralized constants
+ALLOWED_EXTENSIONS = ALLOWED_VIDEO_EXTENSIONS
+MAX_BYTES = MAX_VIDEO_SIZE_BYTES
 
 
 def _ensure_uploads_dir() -> str:
@@ -83,15 +89,16 @@ def upload_video(
       raise ValidationError("File is empty")
     
     # Check for suspiciously small files (likely corrupted)
-    if file_size_bytes < 1024:  # 1KB minimum
-      logger.error(f"File too small: {file_size_bytes} bytes (min: 1KB)")
-      raise ValidationError("File too small (minimum 1KB)")
+    if file_size_bytes < MIN_VIDEO_SIZE_BYTES:
+      logger.error(f"File too small: {file_size_bytes} bytes (min: {MIN_VIDEO_SIZE_BYTES // 1024}KB)")
+      raise ValidationError(f"File too small (minimum {MIN_VIDEO_SIZE_BYTES // 1024}KB)")
     
     # Check maximum size
-    if file_size_bytes > MAX_MB * 1024 * 1024:
-      logger.error(f"File too large: {file_size_mb:.2f} MB (max: {MAX_MB} MB)")
+    if file_size_bytes > MAX_BYTES:
+      max_mb = MAX_BYTES / (1024 * 1024)
+      logger.error(f"File too large: {file_size_mb:.2f} MB (max: {max_mb:.0f} MB)")
       raise ValidationError(
-        f"File exceeds {MAX_MB}MB limit (size: {file_size_mb:.2f} MB)"
+        f"File exceeds {max_mb:.0f}MB limit (size: {file_size_mb:.2f} MB)"
       )
 
     # Copy file to uploads directory
@@ -157,7 +164,11 @@ def upload_video(
 
   except ValidationError as ve:
     logger.warning(f"Validation error: {ve}")
-    return {"status": "error", "error_type": "validation", "message": str(ve)}
+    # Sanitize error message for client (avoid exposing internal paths)
+    error_msg = str(ve)
+    if "Video file not found" in error_msg or "path" in error_msg.lower():
+      error_msg = "Invalid video file"
+    return {"status": "error", "error_type": "validation", "message": error_msg}
   
   except DatabaseError as de:
     logger.error(f"Database error: {de}", exc_info=True)

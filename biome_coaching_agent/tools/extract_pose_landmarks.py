@@ -137,85 +137,93 @@ def extract_pose_landmarks(
       raise PoseExtractionError(f"MediaPipe import failed: {imp_err}")
 
     mp_pose = mp.solutions.pose
-    pose = mp_pose.Pose(model_complexity=1)
-
-    frames: List[Dict[str, Any]] = []
-    angle_series: List[Dict[str, float]] = []
-    idx = 0
-    processed_count = 0
-    no_detection_count = 0
+    pose = None
     
-    while True:
-      ret, frame = cap.read()
-      if not ret:
-        break
+    # MEMORY LEAK FIX: Ensure pose and cap are always closed
+    try:
+      pose = mp_pose.Pose(model_complexity=1)
+
+      frames: List[Dict[str, Any]] = []
+      angle_series: List[Dict[str, float]] = []
+      idx = 0
+      processed_count = 0
+      no_detection_count = 0
       
-      if idx % frame_interval != 0:
-        idx += 1
-        continue
+      while True:
+        ret, frame = cap.read()
+        if not ret:
+          break
+        
+        if idx % frame_interval != 0:
+          idx += 1
+          continue
 
-      rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-      res = pose.process(rgb)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        res = pose.process(rgb)
+        
+        if not res.pose_landmarks:
+          no_detection_count += 1
+          idx += 1
+          continue
+
+        # Process landmarks
+        lm_list: List[Dict[str, float]] = []
+        for lm in res.pose_landmarks.landmark:
+          lm_list.append({"x": float(lm.x), "y": float(lm.y), "z": float(lm.z)})
+
+        angles = _calc_joint_angles(lm_list)
+        angle_series.append(angles)
+        frames.append({"frame": idx, "landmarks": lm_list, "angles": angles})
+        processed_count += 1
+        idx += 1
+
+      if not frames:
+        logger.warning(
+          f"No person detected in video: {video_url} "
+          f"(checked {idx} frames, no detections: {no_detection_count})"
+        )
+        raise PoseExtractionError(
+          "No person detected in video. Ensure the video shows a person in good lighting "
+          "with full body visible in frame."
+        )
+
+      metrics = _aggregate_metrics(angle_series)
       
-      if not res.pose_landmarks:
-        no_detection_count += 1
-        idx += 1
-        continue
-
-      # Process landmarks
-      lm_list: List[Dict[str, float]] = []
-      for lm in res.pose_landmarks.landmark:
-        lm_list.append({"x": float(lm.x), "y": float(lm.y), "z": float(lm.z)})
-
-      angles = _calc_joint_angles(lm_list)
-      angle_series.append(angles)
-      frames.append({"frame": idx, "landmarks": lm_list, "angles": angles})
-      processed_count += 1
-      idx += 1
-
-    cap.release()
-    pose.close()
-
-    if not frames:
-      logger.warning(
-        f"No person detected in video: {video_url} "
-        f"(checked {idx} frames, no detections: {no_detection_count})"
-      )
-      raise PoseExtractionError(
-        "No person detected in video. Ensure the video shows a person in good lighting "
-        "with full body visible in frame."
+      logger.info(
+        f"Pose extraction complete - session: {session_id}, "
+        f"total_frames: {idx}, processed: {processed_count}, "
+        f"detected: {len(frames)}, skipped: {no_detection_count}"
       )
 
-    metrics = _aggregate_metrics(angle_series)
-    
-    logger.info(
-      f"Pose extraction complete - session: {session_id}, "
-      f"total_frames: {idx}, processed: {processed_count}, "
-      f"detected: {len(frames)}, skipped: {no_detection_count}"
-    )
+      # For ADK: Return ONLY metrics + sample frames to avoid token limit
+      # Sample max 20 frames evenly distributed across video
+      max_sample_frames = 20
+      if len(frames) > max_sample_frames:
+        step = len(frames) // max_sample_frames
+        sampled_frames = frames[::step][:max_sample_frames]
+        logger.info(f"Sampled {len(sampled_frames)} frames from {len(frames)} total for Gemini analysis")
+      else:
+        sampled_frames = frames
+      
+      # Remove full landmarks from sampled frames, keep only angles
+      lightweight_frames = [
+        {"frame": f["frame"], "angles": f["angles"]} 
+        for f in sampled_frames
+      ]
 
-    # For ADK: Return ONLY metrics + sample frames to avoid token limit
-    # Sample max 20 frames evenly distributed across video
-    max_sample_frames = 20
-    if len(frames) > max_sample_frames:
-      step = len(frames) // max_sample_frames
-      sampled_frames = frames[::step][:max_sample_frames]
-      logger.info(f"Sampled {len(sampled_frames)} frames from {len(frames)} total for Gemini analysis")
-    else:
-      sampled_frames = frames
+      return {
+        "status": "success",
+        "total_frames": len(frames),
+        "metrics": metrics,
+        "sample_frames": lightweight_frames,  # Only angles from sampled frames
+      }
     
-    # Remove full landmarks from sampled frames, keep only angles
-    lightweight_frames = [
-      {"frame": f["frame"], "angles": f["angles"]} 
-      for f in sampled_frames
-    ]
-
-    return {
-      "status": "success",
-      "total_frames": len(frames),
-      "metrics": metrics,
-      "sample_frames": lightweight_frames,  # Only angles from sampled frames
-    }
+    finally:
+      # Always cleanup resources
+      if pose:
+        pose.close()
+      cap.release()
+      logger.debug("MediaPipe Pose resources cleaned up")
 
   except SessionNotFoundError as snfe:
     logger.error(f"Session not found: {snfe}")

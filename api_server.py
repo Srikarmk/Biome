@@ -20,7 +20,13 @@ from google.genai import types
 
 # Import agent and tools
 from biome_coaching_agent.agent import root_agent
-from biome_coaching_agent.config import settings
+from biome_coaching_agent.config import (
+    settings,
+    ALLOWED_VIDEO_EXTENSIONS,
+    MIN_VIDEO_SIZE_BYTES,
+    MAX_VIDEO_SIZE_BYTES,
+    DEMO_USER_ID,
+)
 from biome_coaching_agent.logging_config import get_logger
 from biome_coaching_agent.exceptions import (
     ValidationError,
@@ -49,25 +55,33 @@ app = FastAPI(
 )
 
 # Enable CORS for React frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # React dev server
-        "http://localhost:3001",  # React dev server (alternate port)
-        "http://localhost:8000",  # Self
-        "http://localhost:8001",  # React dev server (alternate port)
-        "http://localhost:8080",  # React on 8080
-        "http://localhost:8081",  # React on 8081
+# Production: Use environment variable CORS_ORIGINS
+# Development: Allow common local dev ports
+if settings.is_production:
+    cors_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
+else:
+    # Development mode - allow common local ports
+    cors_origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8000",
+        "http://localhost:8001",
+        "http://localhost:8080",
+        "http://localhost:8081",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
         "http://127.0.0.1:8000",
         "http://127.0.0.1:8001",
         "http://127.0.0.1:8080",
         "http://127.0.0.1:8081",
-    ],
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],  # Only methods we use
-    allow_headers=["Content-Type", "Accept", "Authorization"],  # Only necessary headers
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "Authorization"],
 )
 
 # Ensure uploads directory exists
@@ -203,19 +217,19 @@ async def analyze_video_endpoint(
             )
         
         # Validation: File too small (likely corrupted)
-        if file_size_bytes < 1024:  # 1KB minimum
+        if file_size_bytes < MIN_VIDEO_SIZE_BYTES:
             raise HTTPException(
                 status_code=400,
-                detail={"error": "File too small (minimum 1KB)", "step": "validation"}
+                detail={"error": f"File too small (minimum {MIN_VIDEO_SIZE_BYTES // 1024}KB)", "step": "validation"}
             )
         
         # Validation: File too large
-        max_size = 100 * 1024 * 1024  # 100MB
-        if file_size_bytes > max_size:
+        if file_size_bytes > MAX_VIDEO_SIZE_BYTES:
             size_mb = file_size_bytes / (1024 * 1024)
+            max_mb = MAX_VIDEO_SIZE_BYTES / (1024 * 1024)
             raise HTTPException(
                 status_code=413,
-                detail={"error": f"File too large: {size_mb:.1f}MB (max 100MB)", "step": "validation"}
+                detail={"error": f"File too large: {size_mb:.1f}MB (max {max_mb:.0f}MB)", "step": "validation"}
             )
         
         # Generate session ID
@@ -223,7 +237,9 @@ async def analyze_video_endpoint(
         
         # Save uploaded file temporarily
         # SECURITY: Use only session_id, ignore user-provided filename to prevent path traversal
-        safe_ext = Path(video.filename).suffix.lower() if video.filename else ".tmp"
+        # SECURITY: Validate extension against whitelist
+        raw_ext = Path(video.filename).suffix.lower() if video.filename else ".mp4"
+        safe_ext = raw_ext if raw_ext in ALLOWED_VIDEO_EXTENSIONS else ".mp4"
         temp_path = UPLOADS_DIR / f"temp_{session_id}{safe_ext}"
         logger.debug(f"Saving uploaded file to temporary location: {temp_path}")
         
@@ -460,7 +476,14 @@ if __name__ == "__main__":
     # Configure server using centralized settings
     logger.info(f"Starting Biome Coaching API server on {settings.host}:{settings.port}")
     logger.info(f"Debug mode: {settings.debug}")
-    logger.info(f"Database: {settings.database_url.split('@')[-1] if '@' in settings.database_url else 'configured'}")
+    
+    # SECURITY: Log database host without credentials
+    if '@' in settings.database_url:
+        # Extract host:port/database from connection string (no credentials)
+        db_info = settings.database_url.split('@')[-1]
+    else:
+        db_info = 'configured'
+    logger.info(f"Database: {db_info}")
     
     uvicorn.run(
         "api_server:app",

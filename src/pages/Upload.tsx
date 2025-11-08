@@ -13,6 +13,7 @@ export default function Upload() {
   const [recordingTime, setRecordingTime] = useState(0);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   const [webcamError, setWebcamError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const webcamRef = useRef<Webcam>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -77,12 +78,14 @@ export default function Upload() {
 
   // File upload handler with validation
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null); // Clear previous errors
+    
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       
       // Validate file type
       if (!file.type.startsWith('video/')) {
-        alert('Please select a video file (MP4, MOV, AVI, WebM)');
+        setUploadError('Please select a video file (MP4, MOV, AVI, WebM)');
         return;
       }
       
@@ -90,13 +93,13 @@ export default function Upload() {
       const maxSize = 100 * 1024 * 1024;
       if (file.size > maxSize) {
         const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-        alert(`File too large: ${sizeMB}MB (maximum 100MB)`);
+        setUploadError(`File too large: ${sizeMB}MB (maximum 100MB)`);
         return;
       }
       
       // Validate file not empty
       if (file.size < 1024) {
-        alert('File is too small or corrupted (minimum 1KB)');
+        setUploadError('File is too small or corrupted (minimum 1KB)');
         return;
       }
       
@@ -108,12 +111,14 @@ export default function Upload() {
   // Drag and drop with validation
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    setUploadError(null); // Clear previous errors
+    
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       
       // Validate file type
       if (!file.type.startsWith('video/')) {
-        alert('Please drop a video file (MP4, MOV, AVI, WebM)');
+        setUploadError('Please drop a video file (MP4, MOV, AVI, WebM)');
         return;
       }
       
@@ -121,7 +126,7 @@ export default function Upload() {
       const maxSize = 100 * 1024 * 1024;
       if (file.size > maxSize) {
         const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-        alert(`File too large: ${sizeMB}MB (maximum 100MB)`);
+        setUploadError(`File too large: ${sizeMB}MB (maximum 100MB)`);
         return;
       }
       
@@ -213,6 +218,26 @@ export default function Upload() {
             Choose how to submit your video
           </p>
         </div>
+
+        {/* Error Display */}
+        {uploadError && (
+          <div className="mb-8 p-4 bg-red-500/10 border-2 border-red-500 rounded-lg">
+            <div className="flex items-start">
+              <span className="text-2xl mr-3">⚠️</span>
+              <div className="flex-1">
+                <p className="text-red-500 font-semibold">Upload Error</p>
+                <p className="text-text-secondary mt-1">{uploadError}</p>
+              </div>
+              <button
+                onClick={() => setUploadError(null)}
+                className="text-text-secondary hover:text-text ml-2"
+                aria-label="Dismiss error"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Method Selection */}
         {!uploadMethod && (
