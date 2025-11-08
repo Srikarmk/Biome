@@ -1,12 +1,11 @@
-# IMPORTANT: Use Python 3.11 (run with: py -3.11 api_server.py)
-# MediaPipe 0.10.9 not compatible with Python 3.12+
-google-adk>=1.0.0
+# IMPORTANT: Requires Python 3.11 (MediaPipe not compatible with 3.12+)
+google-adk>=1.16.0
 mediapipe==0.10.9
 opencv-python-headless>=4.8.0
 psycopg[binary]>=3.1.0
 python-dotenv>=1.0.0
 fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
+uvicorn[standard]>=0.34.0
 numpy>=1.24.0
 pydantic>=2.0.0
 python-multipart>=0.0.6
