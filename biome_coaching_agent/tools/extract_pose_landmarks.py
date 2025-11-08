@@ -67,7 +67,7 @@ def _aggregate_metrics(angle_series: List[Dict[str, float]]) -> Dict[str, Any]:
 
 def extract_pose_landmarks(
   session_id: str,
-  fps: int = 10,
+  fps: int = 3,  # Reduced from 10 to 3 FPS to avoid token limit
   tool_context: ToolContext = None,
 ) -> dict:
   """
@@ -194,14 +194,27 @@ def extract_pose_landmarks(
       f"detected: {len(frames)}, skipped: {no_detection_count}"
     )
 
-    # For ADK: Return ONLY metrics (no frames) to keep context small
-    # The metrics contain all the aggregated data needed for analysis
+    # For ADK: Return ONLY metrics + sample frames to avoid token limit
+    # Sample max 20 frames evenly distributed across video
+    max_sample_frames = 20
+    if len(frames) > max_sample_frames:
+      step = len(frames) // max_sample_frames
+      sampled_frames = frames[::step][:max_sample_frames]
+      logger.info(f"Sampled {len(sampled_frames)} frames from {len(frames)} total for Gemini analysis")
+    else:
+      sampled_frames = frames
+    
+    # Remove full landmarks from sampled frames, keep only angles
+    lightweight_frames = [
+      {"frame": f["frame"], "angles": f["angles"]} 
+      for f in sampled_frames
+    ]
+
     return {
       "status": "success",
-      "detected_exercise": "Squat",  # hackathon simplification
       "total_frames": len(frames),
       "metrics": metrics,
-      "note": f"Extracted pose data from {len(frames)} frames with {processed_count} successful detections"
+      "sample_frames": lightweight_frames,  # Only angles from sampled frames
     }
 
   except SessionNotFoundError as snfe:

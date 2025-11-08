@@ -11,45 +11,121 @@ export default function Upload() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [webcamError, setWebcamError] = useState<string | null>(null);
 
   const webcamRef = useRef<Webcam>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const navigate = useNavigate();
 
-  const exercise = localStorage.getItem("selectedExercise") || "Unknown";
+  // Safely get selected exercise with validation
+  const getSelectedExercise = (): string => {
+    const stored = localStorage.getItem("selectedExercise");
+    const validExercises = ['Squat', 'Push-up', 'Deadlift', 'Plank', 'Lunge', 'Pull-up'];
+    
+    if (stored && validExercises.includes(stored)) {
+      return stored;
+    }
+    // Default to Squat if invalid or missing
+    return "Squat";
+  };
+
+  const exercise = getSelectedExercise();
 
   // Cleanup on unmount to fix memory leaks
   useEffect(() => {
+    // Capture ref value for cleanup
+    const webcam = webcamRef.current;
+    const recordingInterval = recordingIntervalRef.current;
+    const mediaRecorder = mediaRecorderRef.current;
+    
     return () => {
       // Stop webcam stream
-      if (webcamRef.current?.stream) {
-        webcamRef.current.stream.getTracks().forEach(track => track.stop());
+      if (webcam?.stream) {
+        webcam.stream.getTracks().forEach(track => track.stop());
       }
       // Clear recording interval
-      if (recordingIntervalRef.current) {
-        clearInterval(recordingIntervalRef.current);
+      if (recordingInterval) {
+        clearInterval(recordingInterval);
       }
       // Stop media recorder
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      // Revoke object URLs to prevent memory leak
+      if (videoPreviewUrl) {
+        URL.revokeObjectURL(videoPreviewUrl);
       }
     };
-  }, []);
+  }, [videoPreviewUrl]);
 
-  // File upload handler
+  // Create preview URL for video file and cleanup on change
+  useEffect(() => {
+    if (videoFile) {
+      const url = URL.createObjectURL(videoFile);
+      setVideoPreviewUrl(url);
+      
+      // Cleanup previous URL
+      return () => {
+        URL.revokeObjectURL(url);
+      };
+    } else {
+      setVideoPreviewUrl(null);
+    }
+  }, [videoFile]);
+
+  // File upload handler with validation
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setVideoFile(e.target.files[0]);
+      const file = e.target.files[0];
+      
+      // Validate file type
+      if (!file.type.startsWith('video/')) {
+        alert('Please select a video file (MP4, MOV, AVI, WebM)');
+        return;
+      }
+      
+      // Validate file size (100MB max)
+      const maxSize = 100 * 1024 * 1024;
+      if (file.size > maxSize) {
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        alert(`File too large: ${sizeMB}MB (maximum 100MB)`);
+        return;
+      }
+      
+      // Validate file not empty
+      if (file.size < 1024) {
+        alert('File is too small or corrupted (minimum 1KB)');
+        return;
+      }
+      
+      setVideoFile(file);
       setUploadMethod("file");
     }
   };
 
-  // Drag and drop
+  // Drag and drop with validation
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setVideoFile(e.dataTransfer.files[0]);
+      const file = e.dataTransfer.files[0];
+      
+      // Validate file type
+      if (!file.type.startsWith('video/')) {
+        alert('Please drop a video file (MP4, MOV, AVI, WebM)');
+        return;
+      }
+      
+      // Validate file size
+      const maxSize = 100 * 1024 * 1024;
+      if (file.size > maxSize) {
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        alert(`File too large: ${sizeMB}MB (maximum 100MB)`);
+        return;
+      }
+      
+      setVideoFile(file);
       setUploadMethod("file");
     }
   };
@@ -106,9 +182,8 @@ export default function Upload() {
   // Submit for analysis
   const handleAnalyze = () => {
     if (videoFile) {
-      // Handle file upload - create object URL for playback
-      const videoUrl = URL.createObjectURL(videoFile);
-      navigate("/analyzing", { state: { video: videoFile, exercise, videoUrl } });
+      // Use existing preview URL instead of creating new one
+      navigate("/analyzing", { state: { video: videoFile, exercise, videoUrl: videoPreviewUrl } });
     } else if (recordedChunks.length > 0) {
       // Handle recorded video
       const blob = new Blob(recordedChunks, { type: "video/webm" });
@@ -195,6 +270,22 @@ export default function Upload() {
         {uploadMethod === "webcam" && (
           <div className="bg-surface rounded-xl p-8 mb-8">
             <div className="max-w-2xl mx-auto">
+              {webcamError && (
+                <div className="bg-red-500/10 border-2 border-red-500 rounded-lg p-4 mb-4">
+                  <p className="text-red-500 font-semibold">⚠️ Camera Error</p>
+                  <p className="text-text-secondary">{webcamError}</p>
+                  <button
+                    onClick={() => {
+                      setWebcamError(null);
+                      setUploadMethod(null);
+                    }}
+                    className="mt-2 bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm"
+                  >
+                    Try File Upload Instead
+                  </button>
+                </div>
+              )}
+              
               <Webcam
                 ref={webcamRef}
                 audio={false}
@@ -205,6 +296,13 @@ export default function Upload() {
                   facingMode: "user",
                 }}
                 className="w-full rounded-lg mb-6"
+                onUserMedia={() => setWebcamError(null)}
+                onUserMediaError={(error: string | DOMException) => {
+                  const errorMsg = typeof error === 'string' ? error : error.message;
+                  setWebcamError(
+                    `Camera access denied or unavailable: ${errorMsg}. Please check browser permissions.`
+                  );
+                }}
               />
 
               <div className="text-center">
@@ -252,11 +350,11 @@ export default function Upload() {
         )}
 
         {/* File Upload Preview */}
-        {videoFile && (
+        {videoFile && videoPreviewUrl && (
           <div className="bg-surface rounded-xl p-8 mb-8">
             <div className="max-w-2xl mx-auto">
               <video
-                src={URL.createObjectURL(videoFile)}
+                src={videoPreviewUrl}
                 controls
                 className="w-full rounded-lg mb-4"
               />

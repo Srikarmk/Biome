@@ -19,6 +19,41 @@ interface AgentCardProps {
   tasks: Task[];
 }
 
+// Backend response types
+interface BackendIssue {
+  issue_type: string;
+  severity: "severe" | "moderate" | "minor";
+  frame_start: number;
+  frame_end: number;
+  coaching_cue: string;
+}
+
+interface BackendMetric {
+  metric_name: string;
+  actual_value: string;
+  target_value: string;
+  status: "good" | "warning" | "error";
+}
+
+interface BackendRecommendation {
+  recommendation_text: string;
+}
+
+// Frontend types
+interface Issue {
+  type: string;
+  severity: "severe" | "moderate" | "minor";
+  frameStart: number;
+  frameEnd: number;
+  cue: string;
+}
+
+interface Metric {
+  actual: string;
+  target: string;
+  status: "good" | "warning" | "error";
+}
+
 function AgentCard({ name, icon, status, tasks }: AgentCardProps) {
   const statusIcon = {
     waiting: "⏸️",
@@ -125,7 +160,7 @@ export default function Analyzing() {
           videoUrl,
           results: {
             overallScore: results.overall_score,
-            issues: results.issues.map((issue: any) => ({
+            issues: results.issues.map((issue: BackendIssue): Issue => ({
               type: issue.issue_type,
               severity: issue.severity,
               frameStart: issue.frame_start,
@@ -133,7 +168,7 @@ export default function Analyzing() {
               cue: issue.coaching_cue,
             })),
             strengths: results.strengths,
-            metrics: results.metrics.reduce((acc: any, m: any) => {
+            metrics: results.metrics.reduce((acc: Record<string, Metric>, m: BackendMetric) => {
               acc[m.metric_name] = {
                 actual: m.actual_value,
                 target: m.target_value,
@@ -141,7 +176,7 @@ export default function Analyzing() {
               };
               return acc;
             }, {}),
-            recommendations: results.recommendations.map((r: any) => r.recommendation_text),
+            recommendations: results.recommendations.map((r: BackendRecommendation) => r.recommendation_text),
           },
         },
       });
