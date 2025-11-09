@@ -1,6 +1,6 @@
 """
 Custom API server for Biome Coaching Agent with video upload support.
-Wraps the ADK agent and provides REST endpoints for the React frontend.
+Uses ADK Runner to orchestrate agent workflow with Gemini AI reasoning.
 """
 import os
 import uuid
@@ -14,12 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 
-# Import ADK agent and tools
+# Import ADK components
+from google.adk.runners import InMemoryRunner
+from google.genai import types
+
+# Import agent and tools
+from biome_coaching_agent.agent import root_agent
 from biome_coaching_agent.config import settings
-from biome_coaching_agent.tools.upload_video import upload_video
-from biome_coaching_agent.tools.extract_pose_landmarks import extract_pose_landmarks
-from biome_coaching_agent.tools.analyze_workout_form import analyze_workout_form
-from biome_coaching_agent.tools.save_analysis_results import save_analysis_results
 from biome_coaching_agent.logging_config import get_logger
 from biome_coaching_agent.exceptions import (
     ValidationError,
@@ -53,20 +54,31 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # React dev server
         "http://localhost:3001",  # React dev server (alternate port)
+        "http://localhost:8080",  # React on 8080
+        "http://localhost:8081",  # React on 8081
         "http://localhost:8000",  # Self
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
         "http://127.0.0.1:8000",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],  # Only methods we use
+    allow_headers=["Content-Type", "Accept", "Authorization"],  # Only necessary headers
 )
 
 # Ensure uploads directory exists
 UPLOADS_DIR = Path(settings.uploads_dir)
 UPLOADS_DIR.mkdir(exist_ok=True)
 logger.info(f"Uploads directory: {UPLOADS_DIR.absolute()}")
+
+# Initialize ADK Runner for agent orchestration
+runner = InMemoryRunner(
+    app_name="biome_coaching_agent",
+    agent=root_agent,
+)
+logger.info(f"ADK Runner initialized - Agent: {root_agent.name}, Model: {root_agent.model}, Tools: {len(root_agent.tools)}")
 
 
 @app.get("/")
@@ -86,27 +98,54 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with dependency verification"""
+    checks = {}
+    overall_healthy = True
+    
+    # Check database
     try:
-        # Test database connection
         with get_db_connection() as conn:
             queries.ping(conn)
-        
-        return {
-            "status": "healthy",
-            "service": "biome-coaching-api",
-            "database": "connected"
-        }
+        checks["database"] = "connected"
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "unhealthy",
-                "service": "biome-coaching-api",
-                "error": str(e)
-            }
-        )
+        checks["database"] = f"error: {str(e)}"
+        overall_healthy = False
+        logger.error(f"Health check - database failed: {e}")
+    
+    # Check MediaPipe availability
+    try:
+        import mediapipe
+        checks["mediapipe"] = "available"
+    except ImportError as e:
+        checks["mediapipe"] = f"missing: {str(e)}"
+        overall_healthy = False
+        logger.error(f"Health check - MediaPipe missing: {e}")
+    
+    # Check uploads directory writable
+    try:
+        test_file = UPLOADS_DIR / ".health_check"
+        test_file.touch()
+        test_file.unlink()
+        checks["storage"] = "writable"
+    except Exception as e:
+        checks["storage"] = f"error: {str(e)}"
+        overall_healthy = False
+        logger.error(f"Health check - storage failed: {e}")
+    
+    # Check Gemini API key configured
+    checks["gemini_key"] = "configured" if settings.google_api_key else "missing"
+    if not settings.google_api_key:
+        overall_healthy = False
+    
+    status_code = 200 if overall_healthy else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if overall_healthy else "unhealthy",
+            "service": "biome-coaching-api",
+            "checks": checks
+        }
+    )
 
 
 @app.post("/api/analyze")
@@ -142,11 +181,48 @@ async def analyze_video_endpoint(
             f"user_id: {user_id}, filename: {video.filename}"
         )
         
+        # Validation: File type
+        if not video.content_type or not video.content_type.startswith('video/'):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "File must be a video (mp4, mov, avi, webm)", "step": "validation"}
+            )
+        
+        # Validation: Read file size
+        video.file.seek(0, 2)  # Seek to end
+        file_size_bytes = video.file.tell()
+        video.file.seek(0)  # Reset to beginning
+        
+        # Validation: Empty file
+        if file_size_bytes == 0:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "File is empty", "step": "validation"}
+            )
+        
+        # Validation: File too small (likely corrupted)
+        if file_size_bytes < 1024:  # 1KB minimum
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "File too small (minimum 1KB)", "step": "validation"}
+            )
+        
+        # Validation: File too large
+        max_size = 100 * 1024 * 1024  # 100MB
+        if file_size_bytes > max_size:
+            size_mb = file_size_bytes / (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail={"error": f"File too large: {size_mb:.1f}MB (max 100MB)", "step": "validation"}
+            )
+        
         # Generate session ID
         session_id = str(uuid.uuid4())
         
         # Save uploaded file temporarily
-        temp_path = UPLOADS_DIR / f"temp_{session_id}_{video.filename}"
+        # SECURITY: Use only session_id, ignore user-provided filename to prevent path traversal
+        safe_ext = Path(video.filename).suffix.lower() if video.filename else ".tmp"
+        temp_path = UPLOADS_DIR / f"temp_{session_id}{safe_ext}"
         logger.debug(f"Saving uploaded file to temporary location: {temp_path}")
         
         with temp_path.open("wb") as buffer:
@@ -155,128 +231,124 @@ async def analyze_video_endpoint(
         file_size = temp_path.stat().st_size
         logger.info(f"File saved: {file_size} bytes")
         
-        # Step 1: Upload video (copies to permanent location with session_id)
-        logger.info(f"Step 1/4: Uploading video for session {session_id}")
-        upload_result = upload_video(
-            video_file_path=str(temp_path),
-            exercise_name=exercise_name,
-            user_id=user_id,
-        )
-        
-        # Clean up temp file
-        if temp_path and temp_path.exists():
-            temp_path.unlink()
-            logger.debug("Temporary file cleaned up")
-        
-        if upload_result.get("status") != "success":
-            error_msg = upload_result.get("message", "Upload failed")
-            error_type = upload_result.get("error_type", "unknown")
-            logger.error(f"Upload failed: {error_msg} (type: {error_type})")
-            raise HTTPException(
-                status_code=400 if error_type == "validation" else 500,
-                detail={
-                    "error": error_msg,
-                    "error_type": error_type,
-                    "step": "upload"
-                }
+        try:
+            # Create ADK session for agent orchestration
+            adk_session = await runner.session_service.create_session(
+                app_name="biome_coaching_agent",
+                user_id=user_id or "demo_user"
             )
-        
-        session_id = upload_result["session_id"]
-        logger.info(f"Video uploaded successfully, session_id: {session_id}")
-        
-        # Step 2: Extract pose landmarks
-        logger.info(f"Step 2/4: Extracting pose landmarks for session {session_id}")
-        pose_result = extract_pose_landmarks(session_id=session_id, fps=10)
-        
-        if pose_result.get("status") != "success":
-            error_msg = pose_result.get("message", "Pose extraction failed")
-            logger.error(f"Pose extraction failed: {error_msg}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": f"Pose extraction failed: {error_msg}",
-                    "step": "pose_extraction",
-                    "session_id": session_id
-                }
+            logger.info(f"ADK session created: {adk_session.id}")
+            
+            # Build prompt for ADK agent to orchestrate workflow
+            prompt = (
+                f"Process this {exercise_name} workout video for form analysis. "
+                f"The video file is located at: {str(temp_path)}. "
+                f"Follow your complete workflow: "
+                f"1) Use upload_video tool with video_file_path='{str(temp_path)}', exercise_name='{exercise_name}', user_id='{user_id or 'demo_user'}'. "
+                f"2) Use extract_pose_landmarks tool with the session_id returned from upload. "
+                f"3) Use analyze_workout_form tool with the pose data and exercise name. "
+                f"4) Use save_analysis_results tool to save everything to the database. "
+                f"After completing all steps, confirm the session_id so I can retrieve the results."
             )
-        
-        logger.info(
-            f"Pose extraction complete: {pose_result.get('total_frames', 0)} frames processed"
-        )
-        
-        # Step 3: Analyze form
-        logger.info(f"Step 3/4: Analyzing form for session {session_id}")
-        analysis_result = analyze_workout_form(
-            pose_data=pose_result,
-            exercise_name=exercise_name,
-        )
-        
-        if analysis_result.get("status") != "success":
-            error_msg = analysis_result.get("message", "Analysis failed")
-            logger.error(f"Form analysis failed: {error_msg}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": f"Analysis failed: {error_msg}",
-                    "step": "analysis",
-                    "session_id": session_id
-                }
+            
+            # Let ADK agent orchestrate the entire workflow using Gemini reasoning
+            user_message = types.Content(
+                role='user',
+                parts=[types.Part.from_text(text=prompt)]
             )
+            
+            logger.info(f"🤖 Sending workflow to ADK agent (Gemini will orchestrate)...")
+            
+            # Run agent and collect tool call results
+            agent_response_text = ""
+            async for event in runner.run_async(
+                user_id=user_id or "demo_user",
+                session_id=adk_session.id,
+                new_message=user_message,
+            ):
+                # Log agent activity
+                if event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if part.text:
+                            if event.author == "model":
+                                agent_response_text += part.text
+                                logger.debug(f"Agent response: {part.text[:100]}...")
+            
+            logger.info(f"ADK agent completed workflow orchestration")
+            
+        finally:
+            # Always cleanup temp file
+            if temp_path and temp_path.exists():
+                try:
+                    temp_path.unlink()
+                    logger.debug("Temporary file cleaned up")
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to cleanup temp file: {cleanup_err}")
         
-        logger.info(
-            f"Form analysis complete: score {analysis_result.get('overall_score')}/10, "
-            f"{len(analysis_result.get('issues', []))} issues found"
-        )
-        
-        # Step 4: Save results to database
-        logger.info(f"Step 4/4: Saving results for session {session_id}")
-        save_result = save_analysis_results(
-            session_id=session_id,
-            analysis_data=analysis_result,
-        )
-        
-        if save_result.get("status") != "success":
-            error_msg = save_result.get("message", "Failed to save results")
-            logger.error(f"Save results failed: {error_msg}")
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "error": f"Failed to save results: {error_msg}",
-                    "step": "save_results",
-                    "session_id": session_id
-                }
+        # Extract session_id from agent response or look for most recent session
+        # The upload_video tool creates a session, we need to find it
+        with get_db_connection() as conn:
+            # Get most recent session for this user/exercise (just created by agent)
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id FROM analysis_sessions 
+                WHERE exercise_name = %s 
+                AND (user_id = %s OR user_id IS NULL)
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (exercise_name, user_id)
             )
+            session_row = cur.fetchone()
+            if not session_row:
+                raise HTTPException(
+                    status_code=500,
+                    detail={"error": "Agent completed but session not found"}
+                )
+            session_id = str(session_row[0])
+        
+        logger.info(f"Retrieved session_id from database: {session_id}")
         
         processing_time = time.time() - start_time
         logger.info(
-            f"Analysis complete for session {session_id} in {processing_time:.2f}s"
+            f"Analysis complete for session {session_id} in {processing_time:.2f}s via ADK agent orchestration"
         )
         
-        # Return complete analysis
+        # Retrieve results from database (saved by agent's save_analysis_results tool)
+        with get_db_connection() as conn:
+            result_data = queries.get_analysis_result_by_session(conn, session_id)
+        
+        if not result_data:
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "Agent completed workflow but results not found in database"}
+            )
+        
+        # Extract data from database result
+        result_info = result_data["result"]
+        issues = result_data["issues"]
+        metrics = result_data["metrics"]
+        strengths = result_data["strengths"]
+        recommendations = result_data["recommendations"]
+        
+        # Return complete analysis in format expected by frontend
         return JSONResponse({
             "status": "success",
             "session_id": session_id,
-            "result_id": save_result.get("result_id"),
-            "overall_score": analysis_result.get("overall_score"),
-            "total_frames": analysis_result.get("total_frames"),
+            "result_id": result_info["id"],
+            "overall_score": float(result_info["overall_score"]),
+            "total_frames": result_info["total_frames"],
             "processing_time": round(processing_time, 2),
-            "issues": analysis_result.get("issues", []),
-            "metrics": analysis_result.get("metrics", []),
-            "strengths": analysis_result.get("strengths", []),
-            "recommendations": analysis_result.get("recommendations", []),
+            "issues": issues,
+            "metrics": metrics,
+            "strengths": [s["strength_text"] for s in strengths],
+            "recommendations": [{"recommendation_text": r["recommendation_text"], "priority": r["priority"]} for r in recommendations],
         })
         
     except HTTPException:
         raise
     except Exception as e:
         logger.critical(f"Unexpected error in analyze endpoint: {e}", exc_info=True)
-        # Clean up temp file on error
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink()
-            except Exception:
-                pass
-        
         raise HTTPException(
             status_code=500,
             detail={
@@ -292,12 +364,21 @@ async def get_results(session_id: str):
     Get analysis results for a session.
     
     Args:
-        session_id: The analysis session ID
+        session_id: The analysis session ID (UUID format)
     
     Returns:
         Complete analysis results if available
     """
     try:
+        # Validate UUID format
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session_id format (must be UUID)"
+            )
+        
         logger.info(f"Fetching results for session {session_id}")
         
         with get_db_connection() as conn:
@@ -329,12 +410,21 @@ async def get_session(session_id: str):
     Get session information including status.
     
     Args:
-        session_id: The analysis session ID
+        session_id: The analysis session ID (UUID format)
     
     Returns:
         Session details including status
     """
     try:
+        # Validate UUID format
+        try:
+            uuid.UUID(session_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid session_id format (must be UUID)"
+            )
+        
         logger.debug(f"Fetching session info for {session_id}")
         
         with get_db_connection() as conn:
@@ -343,14 +433,15 @@ async def get_session(session_id: str):
         if not session_row:
             raise HTTPException(status_code=404, detail="Session not found")
         
-        # Parse the row (structure: id, user_id, exercise_id, exercise_name, video_url, ...)
+        # Parse the row with explicit indices (matches SELECT order in queries.py)
+        # Order: id, user_id, exercise_id, exercise_name, video_url, video_duration, status, created_at, started_at, completed_at, error_message
         return JSONResponse({
-            "session_id": str(session_row[0]),
-            "user_id": str(session_row[1]) if session_row[1] else None,
-            "exercise_name": session_row[3],
-            "video_url": session_row[4],
-            "status": session_row[6],
-            "created_at": session_row[7].isoformat() if session_row[7] else None,
+            "session_id": str(session_row[0]),  # id
+            "user_id": str(session_row[1]) if session_row[1] else None,  # user_id
+            "exercise_name": session_row[3],  # exercise_name
+            "video_url": session_row[4],  # video_url
+            "status": session_row[6],  # status
+            "created_at": session_row[7].isoformat() if session_row[7] else None,  # created_at
         })
         
     except HTTPException:

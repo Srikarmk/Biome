@@ -3,7 +3,6 @@ Database connection utilities for PostgreSQL using psycopg (v3).
 Provides a context manager for safe connection acquisition.
 """
 import contextlib
-import os
 from typing import Iterator
 
 import psycopg
@@ -11,22 +10,24 @@ import psycopg
 # Import logger - avoid circular import by importing locally if needed
 try:
   from biome_coaching_agent.logging_config import get_logger
+  from biome_coaching_agent.config import settings
   logger = get_logger(__name__)
 except ImportError:
   # Fallback to basic logging if biome_coaching_agent not available
   import logging
+  import os
   logger = logging.getLogger(__name__)
+  
+  # Fallback settings if config not available
+  class _FallbackSettings:
+    database_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/biome_coaching")
+  settings = _FallbackSettings()
 
 
 def _get_connection_string() -> str:
-  """Get database connection string from environment or use default."""
-  env_url = os.getenv("DATABASE_URL")
-  if env_url:
-    logger.debug("Using DATABASE_URL from environment")
-    return env_url
-  # Sensible default for local dev
-  logger.debug("Using default database connection string")
-  return "postgresql://postgres:postgres@localhost:5432/biome_coaching"
+  """Get database connection string from centralized config."""
+  logger.debug(f"Using DATABASE_URL from settings")
+  return settings.database_url
 
 
 @contextlib.contextmanager
