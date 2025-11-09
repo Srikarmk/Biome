@@ -90,9 +90,9 @@ function AgentCard({ name, icon, status, tasks }: AgentCardProps) {
 
 // Real analysis - mock data removed since backend is working
 
-// API URL - defaults to local backend at port 8000
+// API URL - defaults to local backend at port 8080
 // For Cloud Run deployment, set REACT_APP_API_URL to your backend URL
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 
 export default function Analyzing() {
   const location = useLocation();
@@ -186,10 +186,12 @@ export default function Analyzing() {
 
       // Navigate to results with real data
       await delay(500);
+      // Recreate blob URL from video file to avoid ERR_FILE_NOT_FOUND
+      const freshVideoUrl = video ? URL.createObjectURL(video) : videoUrl;
       navigate("/results", {
         state: {
           exercise,
-          videoUrl,
+          videoUrl: freshVideoUrl,
           results: {
             overallScore: results.overall_score,
             issues: results.issues.map((issue: BackendIssue): Issue => ({

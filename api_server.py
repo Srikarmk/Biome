@@ -576,7 +576,7 @@ if __name__ == "__main__":
         "api_server:app",
         host=settings.host,
         port=settings.port,
-        reload=settings.reload,
+        reload=False,  # Disabled to prevent interruptions during analysis
         log_level=settings.log_level
     )
 

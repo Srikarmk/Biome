@@ -47,19 +47,18 @@ def save_analysis_results(
   """
   logger.info(f"Saving analysis results for session: {session_id}")
   logger.debug(f"Received analysis_data keys: {list(analysis_data.keys())}")
-  logger.debug(f"Analysis data status field: {analysis_data.get('status', 'MISSING')}")
   
   try:
-    # Validate analysis data - check if status exists and is success
-    status = analysis_data.get("status")
-    if status != "success":
-      error_msg = analysis_data.get("message", f"Analysis data indicates failure (status={status})")
+    # Validate analysis data - check for required fields
+    overall_score = analysis_data.get("overall_score")
+    total_frames = analysis_data.get("total_frames")
+    
+    if overall_score is None or total_frames is None:
+      error_msg = f"Missing required fields: overall_score={overall_score}, total_frames={total_frames}"
       logger.error(f"Invalid analysis data for session {session_id}: {error_msg}")
       logger.error(f"Full analysis_data received: {analysis_data}")
       raise ValidationError(error_msg)
-
-    overall_score = analysis_data.get("overall_score", 0.0)
-    total_frames = analysis_data.get("total_frames", 0)
+    
     processing_time = analysis_data.get("processing_time", None)
 
     issues = analysis_data.get("issues", [])
