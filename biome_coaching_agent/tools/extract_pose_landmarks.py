@@ -218,6 +218,10 @@ def extract_pose_landmarks(
         "sample_frames": lightweight_frames,  # Only angles from sampled frames
       }
     
+    except Exception as pose_err:
+      # Handle errors during pose extraction
+      logger.error(f"Error during pose processing: {pose_err}")
+      raise
     finally:
       # Always cleanup resources
       if pose:

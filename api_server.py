@@ -6,13 +6,19 @@ import os
 import uuid
 import shutil
 import time
+import asyncio
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from pydantic import BaseModel, Field, validator
+from enum import Enum
 
 # Import ADK components
 from google.adk.runners import InMemoryRunner
@@ -40,6 +46,30 @@ from db import queries
 # Initialize logger
 logger = get_logger(__name__)
 
+
+# ============================================
+# REQUEST VALIDATION MODELS
+# ============================================
+
+class ExerciseType(str, Enum):
+    """Allowed exercise types for analysis"""
+    SQUAT = "Squat"
+    PUSHUP = "Push-up"
+    DEADLIFT = "Deadlift"
+    PLANK = "Plank"
+    LUNGE = "Lunge"
+    PULLUP = "Pull-up"
+    BENCH_PRESS = "Bench Press"
+    SHOULDER_PRESS = "Shoulder Press"
+    ROW = "Row"
+    OVERHEAD_PRESS = "Overhead Press"
+    HIP_THRUST = "Hip Thrust"
+
+
+# ============================================
+# STARTUP CONFIGURATION
+# ============================================
+
 # Validate configuration on startup
 try:
     settings.validate()
@@ -53,6 +83,11 @@ app = FastAPI(
     description="AI-powered fitness form coaching API",
     version="1.0.0"
 )
+
+# Initialize rate limiter to prevent abuse
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Enable CORS for React frontend
 # Production: Use environment variable CORS_ORIGINS
@@ -165,7 +200,10 @@ async def health_check():
 
 
 @app.post("/api/analyze")
+@limiter.limit("5/minute")  # Max 5 uploads per minute per IP
+@limiter.limit("20/hour")   # Max 20 uploads per hour per IP
 async def analyze_video_endpoint(
+    request: Request,  # Required by slowapi for rate limiting
     video: UploadFile = File(...),
     exercise_name: str = Form(...),
     user_id: Optional[str] = Form(None),
@@ -196,6 +234,27 @@ async def analyze_video_endpoint(
             f"Analysis request received - exercise: {exercise_name}, "
             f"user_id: {user_id}, filename: {video.filename}"
         )
+        
+        # Validation: Exercise name
+        valid_exercises = [e.value for e in ExerciseType]
+        if exercise_name not in valid_exercises:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": f"Invalid exercise: '{exercise_name}'. Must be one of: {', '.join(valid_exercises)}",
+                    "step": "validation"
+                }
+            )
+        
+        # Validation: User ID format
+        if user_id and user_id != "demo_user":
+            try:
+                uuid.UUID(user_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail={"error": "user_id must be a valid UUID or 'demo_user'", "step": "validation"}
+                )
         
         # Validation: File type
         if not video.content_type or not video.content_type.startswith('video/'):
@@ -277,22 +336,45 @@ async def analyze_video_endpoint(
             
             logger.info(f"🤖 Sending workflow to ADK agent (Gemini will orchestrate)...")
             
-            # Run agent and collect tool call results
-            agent_response_text = ""
-            async for event in runner.run_async(
-                user_id=user_id or "demo_user",
-                session_id=adk_session.id,
-                new_message=user_message,
-            ):
-                # Log agent activity
-                if event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if part.text:
-                            if event.author == "model":
-                                agent_response_text += part.text
-                                logger.debug(f"Agent response: {part.text[:100]}...")
+            # Run agent with timeout to prevent hung requests
+            # Track session_id from tool results to avoid race condition
+            tracked_session_id = None
             
-            logger.info(f"ADK agent completed workflow orchestration")
+            try:
+                async with asyncio.timeout(180):  # 3 minute maximum timeout
+                    agent_response_text = ""
+                    async for event in runner.run_async(
+                        user_id=user_id or "demo_user",
+                        session_id=adk_session.id,
+                        new_message=user_message,
+                    ):
+                        # Extract session_id from upload_video tool result
+                        if hasattr(event, 'tool_name') and event.tool_name == "upload_video":
+                            if hasattr(event, 'tool_result') and event.tool_result:
+                                result = event.tool_result
+                                if isinstance(result, dict) and result.get("status") == "success":
+                                    tracked_session_id = result.get("session_id")
+                                    logger.info(f"Tracked session_id from upload_video tool: {tracked_session_id}")
+                        
+                        # Log agent activity
+                        if event.content and event.content.parts:
+                            for part in event.content.parts:
+                                if part.text:
+                                    if event.author == "model":
+                                        agent_response_text += part.text
+                                        logger.debug(f"Agent response: {part.text[:100]}...")
+                
+                logger.info(f"ADK agent completed workflow orchestration")
+            
+            except asyncio.TimeoutError:
+                logger.error(f"Analysis timeout after 180 seconds for exercise: {exercise_name}")
+                raise HTTPException(
+                    status_code=504,
+                    detail={
+                        "error": "Analysis timeout - video too long or complex. Try a shorter video (max 2 minutes)",
+                        "step": "processing"
+                    }
+                )
             
         finally:
             # Always cleanup temp file
@@ -303,32 +385,37 @@ async def analyze_video_endpoint(
                 except Exception as cleanup_err:
                     logger.warning(f"Failed to cleanup temp file: {cleanup_err}")
         
-        # Extract session_id from agent response or look for most recent session
-        # The upload_video tool creates a session, we need to find it
-        # Convert "demo_user" to None since user_id column is UUID type
-        db_user_id = None if user_id == "demo_user" else user_id
-        
-        with get_db_connection() as conn:
-            # Get most recent session for this user/exercise (just created by agent)
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id FROM analysis_sessions 
-                WHERE exercise_name = %s 
-                AND (user_id = %s OR user_id IS NULL)
-                ORDER BY created_at DESC LIMIT 1
-                """,
-                (exercise_name, db_user_id)
-            )
-            session_row = cur.fetchone()
-            if not session_row:
-                raise HTTPException(
-                    status_code=500,
-                    detail={"error": "Agent completed but session not found"}
+        # Use tracked session_id from tool result (prevents race condition)
+        # Fallback to database query only if tracking failed
+        if tracked_session_id:
+            session_id = tracked_session_id
+            logger.info(f"Using tracked session_id from upload_video tool: {session_id}")
+        else:
+            # Fallback: Query database (WARNING: potential race condition in multi-user scenarios)
+            logger.warning("Session ID not tracked from tool result, falling back to database query")
+            db_user_id = None if user_id == "demo_user" else user_id
+            
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT id FROM analysis_sessions 
+                    WHERE exercise_name = %s 
+                    AND (user_id = %s OR user_id IS NULL)
+                    AND created_at > NOW() - INTERVAL '5 minutes'
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (exercise_name, db_user_id)
                 )
-            session_id = str(session_row[0])
-        
-        logger.info(f"Retrieved session_id from database: {session_id}")
+                session_row = cur.fetchone()
+                if not session_row:
+                    raise HTTPException(
+                        status_code=500,
+                        detail={"error": "Agent completed but session not found"}
+                    )
+                session_id = str(session_row[0])
+            
+            logger.info(f"Retrieved session_id from database (fallback): {session_id}")
         
         processing_time = time.time() - start_time
         logger.info(

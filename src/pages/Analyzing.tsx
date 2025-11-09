@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 
@@ -106,12 +106,24 @@ export default function Analyzing() {
     coaching: "waiting",
   });
   const [error, setError] = useState<string | null>(null);
+  const [isCancelled, setIsCancelled] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const delay = (ms: number) =>
     new Promise((resolve) => setTimeout(resolve, ms));
+  
+  const handleCancelAnalysis = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setIsCancelled(true);
+      setError("Analysis cancelled by user");
+      setAgentStatus({ vision: "waiting", coaching: "waiting" });
+    }
+  };
 
   const performRealAnalysis = useCallback(async () => {
     try {
+      setIsCancelled(false);
       setCurrentStep("uploading");
       setProgress(10);
       setAgentStatus({ vision: "processing", coaching: "waiting" });
@@ -133,11 +145,31 @@ export default function Analyzing() {
 
       setProgress(20);
 
-      // Call backend API
-      const response = await fetch(`${API_URL}/api/analyze`, {
-        method: "POST",
-        body: formData,
-      });
+      // Call backend API with timeout and cancellation support
+      abortControllerRef.current = new AbortController();
+      const timeoutId = setTimeout(() => {
+        abortControllerRef.current?.abort();
+      }, 180000); // 3 minute timeout
+      
+      let response;
+      try {
+        response = await fetch(`${API_URL}/api/analyze`, {
+          method: "POST",
+          body: formData,
+          signal: abortControllerRef.current.signal,
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          if (isCancelled) {
+            throw new Error("Analysis cancelled by user");
+          } else {
+            throw new Error("Analysis timeout - video too long. Try a shorter video (max 2 minutes)");
+          }
+        }
+        throw fetchError;
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
@@ -185,7 +217,7 @@ export default function Analyzing() {
       setError(error instanceof Error ? error.message : "Unknown error occurred");
       setAgentStatus({ vision: "waiting", coaching: "waiting" });
     }
-  }, [navigate, exercise, video, videoUrl]);
+  }, [navigate, exercise, video, videoUrl, isCancelled]);
 
   // Simulation removed - using real API analysis only
 
@@ -261,6 +293,22 @@ export default function Analyzing() {
                 Start Over
               </button>
             </div>
+          </div>
+        )}
+        
+        {/* Cancel Button (only show while processing) */}
+        {!error && progress < 100 && (
+          <div className="mb-8 text-center">
+            <button
+              onClick={handleCancelAnalysis}
+              className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-medium transition-colors inline-flex items-center gap-2"
+            >
+              <span>⏹</span>
+              Cancel Analysis
+            </button>
+            <p className="text-text-secondary text-sm mt-2">
+              You can cancel if the analysis is taking too long
+            </p>
           </div>
         )}
 

@@ -15,14 +15,25 @@ from typing import Any, Dict, List
 from google.adk.tools.tool_context import ToolContext
 from biome_coaching_agent.logging_config import get_logger  # type: ignore
 from biome_coaching_agent.exceptions import AnalysisError, ValidationError  # type: ignore
+from biome_coaching_agent.biomechanics_standards import (  # type: ignore
+    SQUAT_STANDARDS,
+    GENERIC_STANDARDS,
+    FRAME_EST,
+    PERFECT_SCORE,
+    EXCELLENT_SCORE_MIN,
+    GOOD_SCORE_MIN,
+    PRIORITY_CRITICAL,
+    PRIORITY_IMPORTANT,
+    PRIORITY_OPTIONAL,
+)
 
 # Initialize logger
 logger = get_logger(__name__)
 
 
 def _calculate_squat_score(metrics: Dict[str, Any]) -> float:
-  """Calculate overall form score (0-10) for squat exercise."""
-  score = 10.0  # Start with perfect score
+  """Calculate overall form score (0-10) for squat exercise using biomechanics standards."""
+  score = PERFECT_SCORE
   penalties: List[float] = []
 
   # Check depth: min_knee_angle < 90° is good depth
@@ -30,27 +41,40 @@ def _calculate_squat_score(metrics: Dict[str, Any]) -> float:
     metrics.get("left_knee_min", 180),
     metrics.get("right_knee_min", 180)
   )
-  if min_knee_angle > 110:
+  if min_knee_angle > SQUAT_STANDARDS.INSUFFICIENT_DEPTH_THRESHOLD:
     # Insufficient depth
-    penalty = min((min_knee_angle - 90) / 20, 3.0)  # Max 3 point penalty
+    penalty = min(
+      (min_knee_angle - SQUAT_STANDARDS.OPTIMAL_DEPTH_ANGLE) / 20,
+      SQUAT_STANDARDS.DEPTH_PENALTY_MAX
+    )
     penalties.append(penalty)
-  elif min_knee_angle < 70:
+  elif min_knee_angle < SQUAT_STANDARDS.EXCESSIVE_DEPTH_MIN:
     # Excessive depth (potential knee strain)
-    penalty = (70 - min_knee_angle) / 10
-    penalties.append(min(penalty, 1.5))
+    penalty = (SQUAT_STANDARDS.EXCESSIVE_DEPTH_MIN - min_knee_angle) / 10
+    penalties.append(min(penalty, SQUAT_STANDARDS.EXCESSIVE_DEPTH_PENALTY_MAX))
 
   # Check knee alignment - asymmetry penalty
   avg_left_knee = metrics.get("left_knee_avg", 180)
   avg_right_knee = metrics.get("right_knee_avg", 180)
   asymmetry = abs(avg_left_knee - avg_right_knee)
-  if asymmetry > 15:
-    penalties.append(min(asymmetry / 15 * 1.5, 2.0))
+  if asymmetry > SQUAT_STANDARDS.MAX_KNEE_ASYMMETRY_WARNING:
+    penalties.append(
+      min(
+        asymmetry / SQUAT_STANDARDS.MAX_KNEE_ASYMMETRY_WARNING * 1.5,
+        SQUAT_STANDARDS.ASYMMETRY_PENALTY_MAX
+      )
+    )
 
-  # Check hip hinge - should maintain ~180° at top
+  # Check hip hinge - should maintain upright torso
   avg_hip = (metrics.get("left_hip_avg", 180) + metrics.get("right_hip_avg", 180)) / 2
-  if avg_hip < 150:
+  if avg_hip < SQUAT_STANDARDS.MIN_HIP_ANGLE_TARGET:
     # Excessive forward lean
-    penalties.append(min((150 - avg_hip) / 20, 2.0))
+    penalties.append(
+      min(
+        (SQUAT_STANDARDS.MIN_HIP_ANGLE_TARGET - avg_hip) / 20,
+        SQUAT_STANDARDS.FORWARD_LEAN_PENALTY_MAX
+      )
+    )
 
   # Apply penalties
   total_penalty = sum(penalties)
@@ -72,11 +96,11 @@ def _identify_squat_issues(
   )
 
   # Issue 1: Insufficient depth
-  if min_knee_angle > 100:
-    severity = "severe" if min_knee_angle > 120 else "moderate"
-    # Estimate frame range (hackathon simplification - assume issue occurs throughout descent)
-    frame_start = int(total_frames * 0.2)  # Typically starts after initial descent
-    frame_end = int(total_frames * 0.8)  # Ends before final ascent
+  if min_knee_angle > SQUAT_STANDARDS.GOOD_DEPTH_MAX_ANGLE:
+    severity = "severe" if min_knee_angle > SQUAT_STANDARDS.SEVERE_DEPTH_THRESHOLD else "moderate"
+    # Estimate frame range using standardized timing
+    frame_start = int(total_frames * FRAME_EST.SQUAT_DESCENT_START)
+    frame_end = int(total_frames * FRAME_EST.SQUAT_BOTTOM_END)
 
     issues.append({
       "issue_type": "Insufficient Squat Depth",
@@ -85,10 +109,11 @@ def _identify_squat_issues(
       "frame_end": frame_end,
       "coaching_cue": (
         f"Lower your hips until your thighs are parallel to the floor "
-        f"(target knee angle < 90°). Currently reaching {min_knee_angle:.0f}°. "
+        f"(target knee angle < {SQUAT_STANDARDS.OPTIMAL_DEPTH_ANGLE:.0f}°). "
+        f"Currently reaching {min_knee_angle:.0f}°. "
         "Focus on pushing your hips back and down, not just your knees forward."
       ),
-      "confidence_score": 0.85,
+      "confidence_score": SQUAT_STANDARDS.DEPTH_ISSUE_CONFIDENCE,
     })
 
   # Issue 2: Knee valgus (knees caving inward)
